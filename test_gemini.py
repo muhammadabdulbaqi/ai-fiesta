@@ -26,10 +26,10 @@ async def test_gemini_models():
     
     # Models to test (from most likely to work, to least likely)
     models_to_test = [
-        "gemini-1.5-flash",      # Most likely to work
-        "gemini-1.5-pro",        # Should work
+        "gemini-2.5-flash",      # Most likely to work
+        "gemini-2.5-pro",        # Should work
         "gemini-pro",            # Older, stable
-        "gemini-1.5-flash-8b",   # Newer, efficient
+        "gemini-2.5-flash-8b",   # Newer, efficient
         "gemini-2.0-flash-exp",  # Experimental (might not be available)
     ]
     
@@ -56,7 +56,15 @@ async def test_gemini_models():
                 )
             )
             
-            result_text = response.text if hasattr(response, 'text') else "No text"
+            # Extract text robustly from candidates -> content -> parts
+            result_text = ""
+            if hasattr(response, 'candidates'):
+                for cand in response.candidates:
+                    content = getattr(cand, 'content', None)
+                    if content and getattr(content, 'parts', None):
+                        for part in content.parts:
+                            if getattr(part, 'text', None):
+                                result_text += part.text
             print(f"   ✅ Non-streaming works: {result_text[:50]}")
             
             # Test streaming
@@ -72,8 +80,14 @@ async def test_gemini_models():
             )
             
             async for chunk in stream:
-                if hasattr(chunk, 'text'):
-                    chunks.append(chunk.text)
+                # Extract chunk text from candidates -> content -> parts
+                if hasattr(chunk, 'candidates'):
+                    for cand in chunk.candidates:
+                        content = getattr(cand, 'content', None)
+                        if content and getattr(content, 'parts', None):
+                            for part in content.parts:
+                                if getattr(part, 'text', None):
+                                    chunks.append(part.text)
             
             print(f"   ✅ Streaming works: Received {len(chunks)} chunks")
             print(f"   ✅ {model_name} - WORKING!")

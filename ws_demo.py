@@ -20,7 +20,7 @@ except Exception as e:
 
 SERVER = os.getenv('SERVER', 'ws://localhost:8000/ws/chat')
 USER_ID = os.getenv('DEMO_USER', 'demo-user-1')
-MODEL = os.getenv('DEMO_MODEL', 'gemini-1.5-flash')
+MODEL = os.getenv('DEMO_MODEL', 'gemini-2.5-flash')
 PROMPT = os.getenv('DEMO_PROMPT', "Write a short haiku about coding")
 
 async def run():

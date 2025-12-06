@@ -35,7 +35,14 @@ async def test_provider(provider_name: str, streaming: bool = False):
         model = "claude-3-haiku-20240307"
     elif provider_name == "gemini":
         provider = GeminiProvider()
-        model = "gemini-1.5-flash"
+        model = "gemini-2.5-flash"
+        # If provider auto-detected a model, show it
+        try:
+            auto = getattr(provider, 'auto_model_actual', None)
+            if auto:
+                print(f"Detected Gemini model for this key: {auto}")
+        except Exception:
+            pass
     else:
         print(f"❌ Unknown provider: {provider_name}")
         return False

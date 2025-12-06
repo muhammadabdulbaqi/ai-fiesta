@@ -15,7 +15,7 @@ The client must send a JSON object immediately after connecting:
 {
   "type": "chat",
   "prompt": "Write a haiku about coding",
-  "model": "gemini-1.5-flash",
+  "model": "gemini-2.5-pro",
   "conversation_id": "conv-123",
   "user_id": "demo-user-1",
   "max_tokens": 300
@@ -23,7 +23,7 @@ The client must send a JSON object immediately after connecting:
 ```
 
 - `type`: must be `chat`
-- `model`: model key (must be allowed by subscription)
+- `model`: model key (must be allowed by subscription). Use `gemini-2.5-pro` as the recommended default for Gemini. Availability depends on your key and region.
 - `user_id`: server validates this against users stored in the system
 
 ## Server → Client messages
@@ -42,7 +42,7 @@ The client must send a JSON object immediately after connecting:
   "message_id": "msg-...",
   "tokens_used": 25,
   "tokens_remaining": 975,
-  "model": "gemini-1.5-flash"
+  "model": "gemini-2.5-flash"
 }
 ```
 
@@ -76,7 +76,7 @@ uvicorn main:app --reload
 
 3. Open the test client in your browser:
 
-- Visit `http://localhost:8000/test_client.html` (served by FastAPI)
+ - Visit `http://localhost:8000/test_client.html` (served by FastAPI)
 
 4. Click **Connect**, enter a prompt, click **Send**.
 
@@ -95,3 +95,10 @@ You should see content streamed in chunks and a final `done` message.
 ## Feature flag
 
 Set `ENABLE_WS_STREAMING=false` in `.env` to quickly disable the WebSocket endpoint.
+
+### Gemini streaming note
+
+- Gemini model availability and streaming support vary by key and region. Some Gemini models or keys do not support streaming (generateContent) even though they appear in `list_models()`.
+- If the provider reports a streaming-related error (404 or unsupported), the app will automatically fall back to a non-streaming generate implementation for that request. The fallback behavior is logged and the client will receive a single `done` message with the final content instead of chunked `chunk` messages.
+
+Recommended action: run `python test_gemini.py` to detect which Gemini models support streaming for your API key. If streaming is unreliable for your key, use `gemini-2.5-pro` (non-streaming) as the default and rely on the fallback.
