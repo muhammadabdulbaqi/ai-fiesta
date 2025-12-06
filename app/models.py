@@ -17,7 +17,7 @@ SUBSCRIPTION_TIERS = {
         "tier_id": "free",
         "name": "Free",
         # Allow the lower-cost / flash Gemini model on the free tier
-        "allowed_models": ["gemini-2.5-flash", "mock-gpt4"],
+        "allowed_models": ["gemini-1.5-flash", "mock-gpt4"],
         "tokens_per_month": 1000,
         "rate_limit_per_minute": 10,
         "cost_usd": 0.0,
@@ -28,8 +28,8 @@ SUBSCRIPTION_TIERS = {
         "allowed_models": [
             "gpt-3.5-turbo",
             "claude-3-haiku-20240307",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
         ],
         "tokens_per_month": 100000,
         "rate_limit_per_minute": 100,

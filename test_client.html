@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Fiesta WebSocket Streaming Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; }
+        #chat { border: 1px solid #ddd; padding: 16px; height: 420px; overflow-y: auto; background: #f9f9f9 }
+        .message { margin: 8px 0; padding: 8px 10px; border-radius: 6px; }
+        .user { background: #e3f2fd; text-align: right; }
+        .assistant { background: #fff; }
+        .info { color: #666; font-size: 13px; margin-top: 8px }
+        #controls { margin-top: 12px }
+        input[type=text] { width: 70%; padding: 8px }
+        button { padding: 8px 12px }
+    </style>
+</head>
+<body>
+    <h1>Fiesta WebSocket Streaming Test</h1>
+    <div>
+        <label>User ID: <input id="userId" type="text" value="demo-user-1" /></label>
+        <label style="margin-left:16px">Model:
+            <select id="model">
+                <optgroup label="Gemini">
+                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                    <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                </optgroup>
+                <optgroup label="OpenAI">
+                    <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                    <option value="gpt-3.5-turbo-0125">gpt-3.5-turbo-0125</option>
+                    <option value="gpt-4">gpt-4</option>
+                    <option value="gpt-5">gpt-5</option>
+                </optgroup>
+                <optgroup label="Anthropic">
+                    <option value="claude-3-haiku-20240307">claude-3-haiku-20240307</option>
+                    <option value="claude-3-sonnet-20240229">claude-3-sonnet-20240229</option>
+                    <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
+                </optgroup>
+            </select>
+        </label>
+    </div>
+
+    <div id="chat"></div>
+
+    <div id="controls">
+        <input id="prompt" type="text" placeholder="Type a prompt... (e.g. Write a short haiku about coding)" />
+        <button id="send">Send</button>
+        <button id="connect">Connect</button>
+        <button id="disconnect">Disconnect</button>
+        <div id="status" class="info">Disconnected</div>
+    </div>
+
+    <script>
+        let ws = null;
+        let currentMessage = null;
+        const chatDiv = document.getElementById('chat');
+        const promptInput = document.getElementById('prompt');
+        const sendButton = document.getElementById('send');
+        const connectButton = document.getElementById('connect');
+        const disconnectButton = document.getElementById('disconnect');
+        const statusDiv = document.getElementById('status');
+        const userIdInput = document.getElementById('userId');
+        const modelSelect = document.getElementById('model');
+
+        function addMessage(text, cls) {
+            const el = document.createElement('div');
+            el.className = 'message ' + cls;
+            el.textContent = text;
+            chatDiv.appendChild(el);
+            chatDiv.scrollTop = chatDiv.scrollHeight;
+            return el;
+        }
+
+        function connect() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+            const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${scheme}://${location.hostname}:8000/ws/chat`);
+
+            ws.onopen = () => {
+                statusDiv.textContent = 'Connected ✓';
+                statusDiv.style.color = 'green';
+                sendButton.disabled = false;
+            };
+
+            ws.onmessage = (evt) => {
+                try {
+                    const data = JSON.parse(evt.data);
+                    if (data.type === 'chunk') {
+                        if (!currentMessage) {
+                            currentMessage = document.createElement('div');
+                            currentMessage.className = 'message assistant';
+                            chatDiv.appendChild(currentMessage);
+                        }
+                        currentMessage.textContent += data.content;
+                        chatDiv.scrollTop = chatDiv.scrollHeight;
+                    } else if (data.type === 'done') {
+                        const info = document.createElement('div');
+                        info.className = 'info';
+                        info.textContent = `Used ${data.tokens_used} tokens. ${data.tokens_remaining} remaining. Model: ${data.model}`;
+                        chatDiv.appendChild(info);
+                        currentMessage = null;
+                    } else if (data.type === 'error') {
+                        const err = document.createElement('div');
+                        err.className = 'message';
+                        err.style.background = '#ffebee';
+                        err.style.color = '#c62828';
+                        err.textContent = `Error: ${data.message || data.error}`;
+                        chatDiv.appendChild(err);
+                        currentMessage = null;
+                    }
+                } catch (e) {
+                    console.error('Invalid message', e, evt.data);
+                }
+            };
+
+            ws.onerror = (err) => {
+                statusDiv.textContent = 'Error ✗';
+                statusDiv.style.color = 'red';
+                console.error('WebSocket error', err);
+            };
+
+            ws.onclose = () => {
+                statusDiv.textContent = 'Disconnected';
+                statusDiv.style.color = 'gray';
+                sendButton.disabled = true;
+                currentMessage = null;
+            };
+        }
+
+        function disconnect() {
+            if (!ws) return;
+            try { ws.close(); } catch(e) {}
+            ws = null;
+            statusDiv.textContent = 'Disconnected';
+        }
+
+        function sendMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert('WebSocket not connected. Click Connect first.');
+                return;
+            }
+            const prompt = promptInput.value.trim();
+            if (!prompt) return;
+
+            addMessage(prompt, 'user');
+
+            const payload = {
+                type: 'chat',
+                prompt: prompt,
+                model: modelSelect.value,
+                user_id: userIdInput.value
+            };
+
+            try {
+                ws.send(JSON.stringify(payload));
+            } catch (e) {
+                console.error('Send failed', e);
+            }
+
+            promptInput.value = '';
+        }
+
+        sendButton.onclick = sendMessage;
+        connectButton.onclick = connect;
+        disconnectButton.onclick = disconnect;
+        promptInput.onkeypress = (e) => { if (e.key === 'Enter') sendMessage(); };
+
+        // Auto-connect when page loads
+        // connect();
+    </script>
+</body>
+</html>
