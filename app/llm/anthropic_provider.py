@@ -1,8 +1,10 @@
 from typing import Optional, AsyncIterator
 import os
+import asyncio
 
 from app.llm.base import BaseLLMProvider
 from app.utils.token_counter import token_counter
+from app.utils.stream_emulation import emulate_stream_text
 
 try:
     from anthropic import AsyncAnthropic
@@ -48,8 +50,15 @@ class AnthropicProvider(BaseLLMProvider):
             ) as stream:
                 async for text in stream.text_stream:
                     yield text
-        except Exception as e:
-            raise Exception(f"Anthropic streaming error: {str(e)}")
+        except Exception:
+            # Fallback to non-streaming generate and emulate streaming
+            try:
+                result = await self.generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature)
+                content = result.get('content', '') if isinstance(result, dict) else str(result)
+                async for part in emulate_stream_text(content):
+                    yield part
+            except Exception:
+                return
 
     def count_tokens(self, text: str) -> int:
         return token_counter.count_tokens(text, "anthropic")

@@ -32,6 +32,9 @@ This document outlines recommended design for integrating PostgreSQL and an asyn
   - tokens_limit (int)
   - tokens_used (int)
   - tokens_remaining (int)
+  - credits_limit (int)
+  - credits_used (int)
+  - credits_remaining (int)
   - monthly_api_cost_usd (float)
   - status (active/paused/cancelled)
   - created_at, expires_at
@@ -73,6 +76,8 @@ To prevent race conditions when multiple concurrent requests attempt to deduct t
 2. SELECT subscription row `FOR UPDATE` to lock it
 3. Verify `tokens_remaining >= tokens_to_deduct`
 4. Update `tokens_used` and `tokens_remaining`
+
+If using credits, apply the same principle but compute `credits_to_deduct` using a deterministic multiplier per model (e.g. `credits = tokens * multiplier`). Verify `credits_remaining >= credits_to_deduct` inside the same transaction and update `credits_used`/`credits_remaining` atomically.
 5. Commit transaction
 
 If the transaction fails, return a 409-like error and retry logic on the client if appropriate.

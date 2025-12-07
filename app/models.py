@@ -19,6 +19,7 @@ SUBSCRIPTION_TIERS = {
         # Allow the lower-cost / flash Gemini model on the free tier
         "allowed_models": ["gemini-2.5-flash", "mock-gpt4"],
         "tokens_per_month": 1000,
+        "credits_per_month": 1000,
         "rate_limit_per_minute": 10,
         "cost_usd": 0.0,
     },
@@ -32,6 +33,7 @@ SUBSCRIPTION_TIERS = {
             "gemini-2.5-flash",
         ],
         "tokens_per_month": 100000,
+        "credits_per_month": 50000,
         "rate_limit_per_minute": 100,
         "cost_usd": 29.99,
     },
@@ -49,6 +51,7 @@ SUBSCRIPTION_TIERS = {
             "gpt-3.5-turbo",
         ],
         "tokens_per_month": 1000000,
+        "credits_per_month": 1000000,
         "rate_limit_per_minute": 1000,
         "cost_usd": 299.99,
     },
@@ -70,6 +73,9 @@ def create_default_subscription(user_id: str, plan: str = "free") -> dict:
         "tokens_limit": tier["tokens_per_month"],
         "tokens_used": 0,
         "tokens_remaining": tier["tokens_per_month"],
+        "credits_limit": tier.get("credits_per_month", tier["tokens_per_month"]),
+        "credits_used": 0,
+        "credits_remaining": tier.get("credits_per_month", tier["tokens_per_month"]),
         "monthly_cost_usd": tier["cost_usd"],
         "monthly_api_cost_usd": 0.0,  # tracks actual API spend
         "rate_limit_per_minute": tier["rate_limit_per_minute"],
@@ -78,4 +84,21 @@ def create_default_subscription(user_id: str, plan: str = "free") -> dict:
     }
     subscriptions_db[subscription["id"]] = subscription
     return subscription
+
+
+# Per-model credit cost multipliers. These represent credits charged per LLM token
+# (multiplier). Adjust values according to your pricing strategy.
+MODEL_CREDIT_COSTS = {
+    "gpt-4": 0.06,           # 0.06 credits per token (example)
+    "gpt-4-turbo": 0.05,
+    "gpt-5": 0.1,
+    "gpt-3.5-turbo": 0.01,
+    "gpt-5.1": 0.12,
+    "claude-3-haiku-20240307": 0.02,
+    "claude-3-opus-20240229": 0.03,
+    "gemini-2.5-pro": 0.04,
+    "gemini-2.5-flash": 0.005,
+    # fallback/default multiplier
+    "default": 0.01,
+}
 

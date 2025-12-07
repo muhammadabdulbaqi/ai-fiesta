@@ -1,19 +1,18 @@
-# WebSocket Streaming - Design & Usage
+# HTTP SSE Streaming - Design & Usage
 
-This document explains the WebSocket streaming endpoint implemented in Fiesta and how to test it locally.
+This document explains the HTTP Server-Sent Events (SSE) streaming endpoint implemented in Fiesta and how to test it locally.
 
 ## Endpoint
 
-- URL: `ws://<host>:<port>/ws/chat`
-- Purpose: Stream LLM responses chunk-by-chunk to clients in real-time.
+- URL: `POST /stream/chat` (returns `text/event-stream` SSE)
+- Purpose: Stream LLM responses chunk-by-chunk to clients in real-time over HTTP using SSE.
 
 ## Client → Server protocol (first message)
 
-The client must send a JSON object immediately after connecting:
+The client must POST a JSON body. Example:
 
 ```json
 {
-  "type": "chat",
   "prompt": "Write a haiku about coding",
   "model": "gemini-2.5-pro",
   "conversation_id": "conv-123",
@@ -22,7 +21,6 @@ The client must send a JSON object immediately after connecting:
 }
 ```
 
-- `type`: must be `chat`
 - `model`: model key (must be allowed by subscription). Use `gemini-2.5-pro` as the recommended default for Gemini. Availability depends on your key and region.
 - `user_id`: server validates this against users stored in the system
 
@@ -42,6 +40,8 @@ The client must send a JSON object immediately after connecting:
   "message_id": "msg-...",
   "tokens_used": 25,
   "tokens_remaining": 975,
+  "credits_used": 1,
+  "credits_remaining": 499,
   "model": "gemini-2.5-flash"
 }
 ```
@@ -58,6 +58,8 @@ The client must send a JSON object immediately after connecting:
 - Actual deduction happens after streaming completes and is based on actual produced tokens (prompt + completion).
 - If the client disconnects before any chunk is sent, no tokens are deducted.
 - If partial output was sent, actual produced tokens are deducted when the stream ends or when the server detects the disconnect (best-effort).
+
+When using credits, follow the same conservative-check-before-stream approach but deduct credits after the stream completes using a model multiplier. The server returns `credits_used` and `credits_remaining` in the `done` event.
 
 ## Production considerations
 
@@ -76,11 +78,11 @@ uvicorn main:app --reload
 
 3. Open the test client in your browser:
 
- - Visit `http://localhost:8000/test_client.html` (served by FastAPI)
+- Visit `http://localhost:8000/test_client.html` (served by FastAPI)
 
-4. Click **Connect**, enter a prompt, click **Send**.
+4. Enter a prompt and click **Send (HTTP-SSE)**.
 
-You should see content streamed in chunks and a final `done` message.
+You should see content streamed in chunks and a final `done` message (SSE `data` events).
 
 ## Troubleshooting
 
@@ -94,7 +96,7 @@ You should see content streamed in chunks and a final `done` message.
 
 ## Feature flag
 
-Set `ENABLE_WS_STREAMING=false` in `.env` to quickly disable the WebSocket endpoint.
+WebSockets were removed in favor of HTTP-SSE streaming. If you previously used the `ENABLE_WS_STREAMING` feature flag, it is no longer used.
 
 ### Gemini streaming note
 

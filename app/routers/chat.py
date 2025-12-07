@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Header, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Header, Request
+from fastapi.responses import StreamingResponse
 import os
 from datetime import datetime
 import uuid
@@ -16,10 +17,13 @@ from ..dependencies import (
     check_model_access,
     check_tokens_available,
     deduct_tokens,
+    check_credits_available,
+    deduct_credits,
     track_api_cost,
     track_real_api_usage,
     check_rate_limit,
 )
+from ..utils.stream_emulation import emulate_stream_text
 
 router = APIRouter(prefix="", tags=["Chat"])
 
@@ -51,9 +55,10 @@ async def chat(request: schemas.ChatRequest, user_id: str = Header(None)):
     # Create provider
     provider = llm_factory.create_provider(model)
     
-    # Estimate tokens
+    # Estimate tokens and check credits
     estimated = provider.count_tokens(request.prompt)
-    check_tokens_available(subscription, estimated + (request.max_tokens or 1000))
+    # Use credits-based check (conservative: include requested max_tokens)
+    check_credits_available(subscription, estimated + (request.max_tokens or 1000), model)
     
     try:
         # Call LLM
@@ -71,8 +76,8 @@ async def chat(request: schemas.ChatRequest, user_id: str = Header(None)):
         completion_tokens = result.get("completion_tokens", 0) if isinstance(result, dict) else 0
         total_tokens = result.get("total_tokens", prompt_tokens + completion_tokens) if isinstance(result, dict) else (prompt_tokens + completion_tokens)
 
-        # Deduct tokens
-        deduct_tokens(subscription, total_tokens)
+        # Deduct credits based on model multiplier
+        credits_deducted = deduct_credits(subscription, total_tokens, model_used)
         
         # Track API cost (provider calculates cost based on tokens)
         cost = provider.estimate_cost(prompt_tokens, completion_tokens, model_used)
@@ -108,6 +113,8 @@ async def chat(request: schemas.ChatRequest, user_id: str = Header(None)):
             model=model_used,
             tokens_used=total_tokens,
             tokens_remaining=subscription.get("tokens_remaining"),
+            # New credit fields for client-side visibility
+            **{"credits_used": subscription.get("credits_used"), "credits_remaining": subscription.get("credits_remaining")}
         )
 
     except HTTPException:
@@ -132,41 +139,26 @@ async def list_models():
     return llm_factory.get_available_models()
 
 
-@router.websocket("/ws/chat")
-async def websocket_chat(websocket: WebSocket):
-    """WebSocket endpoint for streaming chat responses.
+@router.post("/stream/chat")
+async def stream_chat(request: Request):
+    """HTTP SSE streaming endpoint.
 
-    Protocol (first message must be JSON):
-      {"type": "chat", "prompt": "...", "model": "...", "conversation_id": "...", "user_id": "..."}
+    The client POSTs a JSON body with the same fields as the websocket protocol:
+      {"prompt":"...","model":"...","conversation_id":"...","user_id":"...","max_tokens":N}
 
-    Server streams chunks: {"type": "chunk", "content": "..."}
-    On finish: {"type": "done", "message_id": "...", "tokens_used": N, "tokens_remaining": M, "model": "..."}
-    On error: {"type": "error", "error": "code", "message": "..."}
+    The server responds with `text/event-stream` SSE events where each event's `data` is a JSON payload:
+      data: {"type":"chunk","content":"..."}
+      data: {"type":"done","message_id":"...","tokens_used":N,...}
+      data: {"type":"error","error":"code","message":"..."}
     """
-    # Feature flag to allow easy revert
-    if os.getenv("ENABLE_WS_STREAMING", "true").lower() not in ("1", "true", "yes"):
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "error": "disabled", "message": "WebSocket streaming is disabled"})
-        await websocket.close()
-        return
-
-    await websocket.accept()
-
     try:
-        data = await websocket.receive_json()
-    except Exception as e:
-        try:
-            await websocket.send_json({"type": "error", "error": "invalid_message", "message": "Expected initial JSON chat message"})
-        except:
-            pass
-        await websocket.close()
-        return
+        data = await request.json()
+    except Exception:
+        return StreamingResponse(("""data: {"type":"error","error":"invalid_request","message":"Expected JSON body"}\n\n"""), media_type="text/event-stream")
 
-    # Basic validation
-    if not isinstance(data, dict) or data.get("type") != "chat":
-        await websocket.send_json({"type": "error", "error": "invalid_message_type", "message": "Expected type='chat'"})
-        await websocket.close()
-        return
+    # Validate input
+    if not isinstance(data, dict):
+        return StreamingResponse(("""data: {"type":"error","error":"invalid_request","message":"Expected JSON object"}\n\n"""), media_type="text/event-stream")
 
     prompt = data.get("prompt")
     model = data.get("model", "mock")
@@ -176,9 +168,7 @@ async def websocket_chat(websocket: WebSocket):
     temperature = data.get("temperature", 0.7)
 
     if not user_id:
-        await websocket.send_json({"type": "error", "error": "missing_user", "message": "user_id is required"})
-        await websocket.close()
-        return
+        return StreamingResponse(("""data: {"type":"error","error":"missing_user","message":"user_id is required"}\n\n"""), media_type="text/event-stream")
 
     # Validate user and subscription
     try:
@@ -186,44 +176,31 @@ async def websocket_chat(websocket: WebSocket):
         subscription = get_subscription_or_404_by_user(user_id)
         check_subscription_active(subscription)
     except HTTPException as e:
-        await websocket.send_json({"type": "error", "error": "invalid_user_or_subscription", "message": str(e.detail)})
-        await websocket.close()
-        return
+        return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"invalid_user_or_subscription\", \"message\": \"{str(e.detail)}\"}}\n\n"), media_type="text/event-stream")
 
     # Check model access
     try:
         check_model_access(subscription, model)
     except HTTPException as e:
-        await websocket.send_json({"type": "error", "error": "model_not_allowed", "message": str(e.detail)})
-        await websocket.close()
-        return
+        return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"model_not_allowed\", \"message\": \"{str(e.detail)}\"}}\n\n"), media_type="text/event-stream")
 
-    # Per-user spacing to avoid provider free-tier bursts (e.g., Gemini ~15 req/min)
+    # Per-user spacing
     try:
         now = time.time()
         last = user_last_request.get(user_id, 0.0)
-        min_spacing = 4.0  # seconds between requests per user
+        min_spacing = 4.0
         if now - last < min_spacing:
             wait = int(min_spacing - (now - last))
-            await websocket.send_json({
-                "type": "error",
-                "error": "rate_limit",
-                "message": f"Please wait {wait} seconds between requests (provider rate limit)"
-            })
-            await websocket.close()
-            return
+            return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"rate_limit\", \"message\": \"Please wait {wait} seconds between requests (provider rate limit)\"}}\n\n"), media_type="text/event-stream")
         user_last_request[user_id] = now
     except Exception:
-        # keep going even if rate limit tracking fails
         pass
 
     # Rate limit check
     try:
         check_rate_limit(user_id, subscription["rate_limit_per_minute"])
     except HTTPException as e:
-        await websocket.send_json({"type": "error", "error": "rate_limited", "message": str(e.detail)})
-        await websocket.close()
-        return
+        return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"rate_limited\", \"message\": \"{str(e.detail)}\"}}\n\n"), media_type="text/event-stream")
 
     provider = llm_factory.create_provider(model)
 
@@ -233,106 +210,143 @@ async def websocket_chat(websocket: WebSocket):
     except Exception:
         estimated = len(prompt.split())
 
-    if subscription["tokens_remaining"] < (estimated + max_tokens):
-        await websocket.send_json({
-            "type": "error",
-            "error": "insufficient_tokens",
-            "message": f"Need ~{estimated + max_tokens} tokens, but only {subscription['tokens_remaining']} remaining"
-        })
-        await websocket.close()
-        return
-
-    # Stream from provider
-    full_response = ""
-    any_chunk_sent = False
-
+    # Check credits instead of raw tokens
     try:
-        async for chunk in provider.stream_generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature):
-            # Some providers may yield bytes or dicts; normalize
-            if not isinstance(chunk, str):
-                try:
-                    chunk_text = str(chunk)
-                except Exception:
+        check_credits_available(subscription, estimated + max_tokens, model)
+    except Exception:
+        return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"insufficient_credits\", \"message\": \"Need ~{int((estimated + max_tokens) * 1)} credits (est), but only {subscription.get('credits_remaining')} remaining\"}}\n\n"), media_type="text/event-stream")
+
+    import json
+
+    async def event_stream():
+        full_response = ""
+        any_chunk_sent = False
+
+        try:
+            async for chunk in provider.stream_generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature):
+                chunk_text = chunk if isinstance(chunk, str) else str(chunk)
+                # Skip empty/whitespace-only chunks to avoid noisy empty SSE events
+                if not chunk_text or chunk_text.strip() == "":
                     continue
-            else:
-                chunk_text = chunk
 
+                # SSE event: data: <json>\n\n
+                payload = json.dumps({"type": "chunk", "content": chunk_text})
+                yield f"data: {payload}\n\n"
+                full_response += chunk_text
+                any_chunk_sent = True
+
+        except Exception as e:
+            # If this looks like a quota or rate-limit error, surface a clearer message and stop
             try:
-                await websocket.send_json({"type": "chunk", "content": chunk_text})
+                msg = str(e)
+                lower = msg.lower()
             except Exception:
-                # Client disconnected
-                raise WebSocketDisconnect()
+                lower = ""
 
-            full_response += chunk_text
-            any_chunk_sent = True
+            if "quota" in lower or "limit" in lower or "rate" in lower or "exhausted" in lower:
+                try:
+                    payload = json.dumps({"type": "error", "error": "llm_error", "message": msg})
+                    yield f"data: {payload}\n\n"
+                except Exception:
+                    pass
+                return
 
-    except WebSocketDisconnect:
-        # Client closed connection; if we already streamed chunks, charge for produced tokens
+            # For other errors, attempt a non-streaming fallback so clients still get an answer
+            try:
+                result = await provider.generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature)
+                content = result.get('content') if isinstance(result, dict) else str(result)
+                # If we have content, emulate streaming it
+                if content:
+                    async for part in emulate_stream_text(content):
+                        if not part or part.strip() == "":
+                            continue
+                        payload = json.dumps({"type": "chunk", "content": part})
+                        yield f"data: {payload}\n\n"
+                        full_response += part
+                        any_chunk_sent = True
+                else:
+                    # no content from generate - fall through to finalization which will send done/error
+                    pass
+            except Exception:
+                # if fallback also fails, send an error and stop
+                try:
+                    payload = json.dumps({"type": "error", "error": "llm_error", "message": str(e)})
+                    yield f"data: {payload}\n\n"
+                except Exception:
+                    pass
+                return
+
+        # If provider produced no chunks (silent stream), try non-streaming generate and emulate
         if not any_chunk_sent:
-            # nothing sent, nothing to charge
-            pass
-        # we do not re-raise; just cleanup
-        return
-    except Exception as e:
-        # LLM error mid-stream
+            try:
+                # Attempt to fetch the final content non-streaming and stream it to client
+                result = await provider.generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature)
+                content = result.get('content') if isinstance(result, dict) else str(result)
+                if content:
+                    emulated_sent = False
+                    async for part in emulate_stream_text(content):
+                        if not part or part.strip() == "":
+                            continue
+                        payload = json.dumps({"type": "chunk", "content": part})
+                        yield f"data: {payload}\n\n"
+                        full_response += part
+                        any_chunk_sent = True
+                        emulated_sent = True
+
+                    # If emulation produced nothing (very short content), send the full content as one chunk
+                    if not emulated_sent and content:
+                        payload = json.dumps({"type": "chunk", "content": content})
+                        yield f"data: {payload}\n\n"
+                        full_response += content
+                        any_chunk_sent = True
+                else:
+                    # no content from generate - fall through to finalization which will send done/error
+                    pass
+            except Exception:
+                # If this fails, continue to finalization to send done/error
+                pass
+
+        # After streaming completes, compute tokens and update subscription
         try:
-            await websocket.send_json({"type": "error", "error": "llm_error", "message": str(e)})
-        except:
-            pass
-        await websocket.close()
-        return
+            prompt_tokens = provider.count_tokens(prompt)
+            completion_tokens = provider.count_tokens(full_response)
+            total_tokens = prompt_tokens + completion_tokens
 
-    # After streaming completes, compute tokens and update subscription
-    try:
-        prompt_tokens = provider.count_tokens(prompt)
-        completion_tokens = provider.count_tokens(full_response)
-        total_tokens = prompt_tokens + completion_tokens
+            # Deduct credits (based on model multiplier)
+            credits = deduct_credits(subscription, total_tokens, model)
 
-        # Deduct tokens atomically (in-memory here)
-        deduct_tokens(subscription, total_tokens)
+            cost = provider.estimate_cost(prompt_tokens, completion_tokens, model) if hasattr(provider, 'estimate_cost') else 0.0
+            track_api_cost(user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
+            track_real_api_usage(user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
 
-        # Compute cost and track
-        cost = provider.estimate_cost(prompt_tokens, completion_tokens, model) if hasattr(provider, 'estimate_cost') else 0.0
-        track_api_cost(user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
-        track_real_api_usage(user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
+            conv_id = conversation_id or str(uuid.uuid4())
+            if conv_id not in conversations_db:
+                conversations_db[conv_id] = {"id": conv_id, "user_id": user_id, "created_at": datetime.now()}
 
-        # Save message
-        conv_id = conversation_id or str(uuid.uuid4())
-        if conv_id not in conversations_db:
-            conversations_db[conv_id] = {"id": conv_id, "user_id": user_id, "created_at": datetime.now()}
+            message_id = str(uuid.uuid4())
+            message = {
+                "id": message_id,
+                "conversation_id": conv_id,
+                "role": "assistant",
+                "content": full_response,
+                "model": model,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "api_cost_usd": round(cost, 6),
+                "created_at": datetime.now(),
+            }
+            messages_db[message_id] = message
 
-        message_id = str(uuid.uuid4())
-        message = {
-            "id": message_id,
-            "conversation_id": conv_id,
-            "role": "assistant",
-            "content": full_response,
-            "model": model,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "api_cost_usd": round(cost, 6),
-            "created_at": datetime.now(),
-        }
-        messages_db[message_id] = message
+            payload = json.dumps({"type": "done", "message_id": message_id, "tokens_used": total_tokens, "tokens_remaining": subscription.get("tokens_remaining"), "model": model, "credits_used": subscription.get("credits_used"), "credits_remaining": subscription.get("credits_remaining")})
+            yield f"data: {payload}\n\n"
 
-        # Send done
-        await websocket.send_json({
-            "type": "done",
-            "message_id": message_id,
-            "tokens_used": total_tokens,
-            "tokens_remaining": subscription.get("tokens_remaining"),
-            "model": model,
-        })
+        except Exception as e:
+            try:
+                payload = json.dumps({"type": "error", "error": "server_error", "message": str(e)})
+                yield f"data: {payload}\n\n"
+            except Exception:
+                pass
 
-    except Exception as e:
-        try:
-            await websocket.send_json({"type": "error", "error": "server_error", "message": str(e)})
-        except:
-            pass
-    finally:
-        try:
-            await websocket.close()
-        except:
-            pass
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 

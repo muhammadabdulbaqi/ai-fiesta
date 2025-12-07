@@ -87,5 +87,7 @@ async def startup_event():
     demo_subscription = models.create_default_subscription(demo_user_id, "free")
     demo_subscription["tokens_used"] = 0
     demo_subscription["tokens_remaining"] = demo_subscription["tokens_limit"]
+    demo_subscription["credits_used"] = 0
+    demo_subscription["credits_remaining"] = demo_subscription.get("credits_limit", demo_subscription.get("tokens_limit"))
 
     print(f"✅ Demo user ready: {demo_user['email']} (ID: {demo_user_id})")

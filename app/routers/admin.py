@@ -14,7 +14,7 @@ async def get_user_cost_report(user_id: str):
     subscription = get_subscription_or_404_by_user(user_id)
     
     return {
-        "user": {"id": user["id"], "email": user["email"], "username": user["username"]},
+        "user": {"id": user["id"], "email": user["email"], "usernamae": user["username"]},
         "subscription": {
             "tier": subscription["tier_name"],
             "monthly_cost_usd": subscription["monthly_cost_usd"],
@@ -65,6 +65,9 @@ async def list_all_subscriptions():
             "tokens_limit": sub["tokens_limit"],
             "tokens_used": sub["tokens_used"],
             "tokens_remaining": sub["tokens_remaining"],
+            "credits_limit": sub.get("credits_limit"),
+            "credits_used": sub.get("credits_used"),
+            "credits_remaining": sub.get("credits_remaining"),
             "status": sub["status"],
             "monthly_cost_usd": sub["monthly_cost_usd"],
             "monthly_api_cost_usd": sub["monthly_api_cost_usd"],

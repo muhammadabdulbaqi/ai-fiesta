@@ -16,7 +16,7 @@
     </style>
 </head>
 <body>
-    <h1>Fiesta WebSocket Streaming Test</h1>
+    <h1>Fiesta HTTP-SSE Streaming Test</h1>
     <div>
         <label>User ID: <input id="userId" type="text" value="demo-user-1" /></label>
         <label style="margin-left:16px">Model:
@@ -24,17 +24,13 @@
                 <optgroup label="Gemini">
                     <option value="gemini-2.5-flash">gemini-2.5-flash</option>
                     <option value="gemini-2.5-pro" selected>gemini-2.5-pro</option>
-                    <!-- removed gemini-2.0-flash because it may be unavailable for many keys -->
                 </optgroup>
                 <optgroup label="OpenAI">
                     <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
-                    <option value="gpt-3.5-turbo-0125">gpt-3.5-turbo-0125</option>
                     <option value="gpt-4">gpt-4</option>
-                    <option value="gpt-5">gpt-5</option>
                 </optgroup>
                 <optgroup label="Anthropic">
                     <option value="claude-3-haiku-20240307">claude-3-haiku-20240307</option>
-                    <option value="claude-3-sonnet-20240229">claude-3-sonnet-20240229</option>
                     <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
                 </optgroup>
             </select>
@@ -45,20 +41,14 @@
 
     <div id="controls">
         <input id="prompt" type="text" placeholder="Type a prompt... (e.g. Write a short haiku about coding)" />
-        <button id="send">Send</button>
-        <button id="connect">Connect</button>
-        <button id="disconnect">Disconnect</button>
-        <div id="status" class="info">Disconnected</div>
+        <button id="send">Send (HTTP-SSE)</button>
+        <div id="status" class="info">Idle</div>
     </div>
 
     <script>
-        let ws = null;
-        let currentMessage = null;
         const chatDiv = document.getElementById('chat');
         const promptInput = document.getElementById('prompt');
         const sendButton = document.getElementById('send');
-        const connectButton = document.getElementById('connect');
-        const disconnectButton = document.getElementById('disconnect');
         const statusDiv = document.getElementById('status');
         const userIdInput = document.getElementById('userId');
         const modelSelect = document.getElementById('model');
@@ -72,102 +62,95 @@
             return el;
         }
 
-        function connect() {
-            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-            const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-            ws = new WebSocket(`${scheme}://${location.hostname}:8000/ws/chat`);
-
-            ws.onopen = () => {
-                statusDiv.textContent = 'Connected ✓';
-                statusDiv.style.color = 'green';
-                sendButton.disabled = false;
-            };
-
-            ws.onmessage = (evt) => {
-                try {
-                    const data = JSON.parse(evt.data);
-                    if (data.type === 'chunk') {
-                        if (!currentMessage) {
-                            currentMessage = document.createElement('div');
-                            currentMessage.className = 'message assistant';
-                            chatDiv.appendChild(currentMessage);
-                        }
-                        currentMessage.textContent += data.content;
-                        chatDiv.scrollTop = chatDiv.scrollHeight;
-                    } else if (data.type === 'done') {
-                        const info = document.createElement('div');
-                        info.className = 'info';
-                        info.textContent = `Used ${data.tokens_used} tokens. ${data.tokens_remaining} remaining. Model: ${data.model}`;
-                        chatDiv.appendChild(info);
-                        currentMessage = null;
-                    } else if (data.type === 'error') {
-                        const err = document.createElement('div');
-                        err.className = 'message';
-                        err.style.background = '#ffebee';
-                        err.style.color = '#c62828';
-                        err.textContent = `Error: ${data.message || data.error}`;
-                        chatDiv.appendChild(err);
-                        currentMessage = null;
-                    }
-                } catch (e) {
-                    console.error('Invalid message', e, evt.data);
-                }
-            };
-
-            ws.onerror = (err) => {
-                statusDiv.textContent = 'Error ✗';
-                statusDiv.style.color = 'red';
-                console.error('WebSocket error', err);
-            };
-
-            ws.onclose = () => {
-                statusDiv.textContent = 'Disconnected';
-                statusDiv.style.color = 'gray';
-                sendButton.disabled = true;
-                currentMessage = null;
-            };
-        }
-
-        function disconnect() {
-            if (!ws) return;
-            try { ws.close(); } catch(e) {}
-            ws = null;
-            statusDiv.textContent = 'Disconnected';
-        }
-
-        function sendMessage() {
-            if (!ws || ws.readyState !== WebSocket.OPEN) {
-                alert('WebSocket not connected. Click Connect first.');
-                return;
-            }
+        async function sendMessage() {
             const prompt = promptInput.value.trim();
             if (!prompt) return;
-
             addMessage(prompt, 'user');
+            statusDiv.textContent = 'Streaming...';
 
             const payload = {
-                type: 'chat',
                 prompt: prompt,
                 model: modelSelect.value,
-                user_id: userIdInput.value
+                user_id: userIdInput.value,
+                max_tokens: 400
             };
 
             try {
-                ws.send(JSON.stringify(payload));
-            } catch (e) {
-                console.error('Send failed', e);
-            }
+                const res = await fetch('/stream/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
 
-            promptInput.value = '';
+                if (!res.ok) {
+                    addMessage('Server returned ' + res.status, 'assistant');
+                    statusDiv.textContent = 'Idle';
+                    return;
+                }
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = '';
+                let currentMessage = null;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    let parts = buffer.split('\n\n');
+                    buffer = parts.pop();
+                    for (const part of parts) {
+                        if (!part.trim()) continue;
+                        // each part is like: data: {json}
+                        const lines = part.split('\n').map(l => l.trim());
+                        for (const line of lines) {
+                            if (line.startsWith('data:')) {
+                                const jsonText = line.slice(5).trim();
+                                try {
+                                    const obj = JSON.parse(jsonText);
+                                    if (obj.type === 'chunk') {
+                                        if (!currentMessage) {
+                                            currentMessage = document.createElement('div');
+                                            currentMessage.className = 'message assistant';
+                                            chatDiv.appendChild(currentMessage);
+                                        }
+                                        currentMessage.textContent += obj.content;
+                                        chatDiv.scrollTop = chatDiv.scrollHeight;
+                                    } else if (obj.type === 'done') {
+                                        const info = document.createElement('div');
+                                        info.className = 'info';
+                                        let text = `Used ${obj.tokens_used} tokens. ${obj.tokens_remaining} remaining. Model: ${obj.model}`;
+                                        if (obj.credits_used !== undefined) {
+                                            text += ` | Credits used: ${obj.credits_used}. Credits remaining: ${obj.credits_remaining}`;
+                                        }
+                                        info.textContent = text;
+                                        chatDiv.appendChild(info);
+                                        currentMessage = null;
+                                    } else if (obj.type === 'error') {
+                                        addMessage('Error: ' + (obj.message || obj.error), 'assistant');
+                                        currentMessage = null;
+                                    }
+                                } catch (e) {
+                                    console.error('Invalid JSON in SSE', e, jsonText);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // flush remaining buffer (if any)
+                statusDiv.textContent = 'Idle';
+                promptInput.value = '';
+            } catch (e) {
+                console.error(e);
+                addMessage('Streaming failed: ' + String(e), 'assistant');
+                statusDiv.textContent = 'Idle';
+            }
         }
 
         sendButton.onclick = sendMessage;
-        connectButton.onclick = connect;
-        disconnectButton.onclick = disconnect;
         promptInput.onkeypress = (e) => { if (e.key === 'Enter') sendMessage(); };
-
-        // Auto-connect when page loads
-        // connect();
     </script>
 </body>
 </html>

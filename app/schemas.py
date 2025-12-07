@@ -28,6 +28,12 @@ class SubscriptionResponse(BaseModel):
     tokens_limit: int
     tokens_used: int
     tokens_remaining: int
+    credits_limit: int | None = None
+    credits_used: int | None = None
+    credits_remaining: int | None = None
+    credits_limit: int | None = None
+    credits_used: int | None = None
+    credits_remaining: int | None = None
 
 
 class TokenUsageResponse(BaseModel):
@@ -35,6 +41,8 @@ class TokenUsageResponse(BaseModel):
     tokens_remaining: int
     tokens_limit: int
     percentage_used: float
+    credits_used: int | None = None
+    credits_remaining: int | None = None
 
 
 class HealthResponse(BaseModel):
@@ -58,6 +66,10 @@ class ChatResponse(BaseModel):
     model: Optional[str] = None
     tokens_used: Optional[int] = None
     tokens_remaining: Optional[int] = None
+    credits_used: Optional[int] = None
+    credits_remaining: Optional[int] = None
+    credits_used: Optional[int] = None
+    credits_remaining: Optional[int] = None
 
 
 class Conversation(BaseModel):
@@ -106,6 +118,12 @@ class SubscriptionDetail(BaseModel):
     tokens_limit: int
     tokens_used: int
     tokens_remaining: int
+    credits_limit: int | None = None
+    credits_used: int | None = None
+    credits_remaining: int | None = None
+    credits_limit: int | None = None
+    credits_used: int | None = None
+    credits_remaining: int | None = None
     monthly_cost_usd: float
     monthly_api_cost_usd: float
     requests_this_minute: int

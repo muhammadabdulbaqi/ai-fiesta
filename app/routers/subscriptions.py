@@ -22,6 +22,9 @@ async def get_user_subscription(user_id: str):
         tokens_limit=subscription["tokens_limit"],
         tokens_used=subscription["tokens_used"],
         tokens_remaining=subscription["tokens_remaining"],
+        credits_limit=subscription.get("credits_limit"),
+        credits_used=subscription.get("credits_used"),
+        credits_remaining=subscription.get("credits_remaining"),
         monthly_cost_usd=subscription["monthly_cost_usd"],
         monthly_api_cost_usd=subscription["monthly_api_cost_usd"],
         requests_this_minute=0,  # TODO: implement rate limiter tracking
@@ -54,6 +57,9 @@ async def upgrade_subscription(user_id: str, tier: str = "pro"):
         tokens_limit=new_sub["tokens_limit"],
         tokens_used=new_sub["tokens_used"],
         tokens_remaining=new_sub["tokens_remaining"],
+        credits_limit=new_sub.get("credits_limit"),
+        credits_used=new_sub.get("credits_used"),
+        credits_remaining=new_sub.get("credits_remaining"),
         monthly_cost_usd=new_sub["monthly_cost_usd"],
         monthly_api_cost_usd=new_sub["monthly_api_cost_usd"],
         requests_this_minute=0,
@@ -82,6 +88,25 @@ async def add_tokens(user_id: str, tokens: int):
     }
 
 
+@router.post("/subscriptions/{user_id}/add-credits")
+async def add_credits(user_id: str, credits: int):
+    """Grant additional credits to a user (admin action)"""
+    if credits <= 0:
+        raise HTTPException(status_code=400, detail="Credits must be positive")
+
+    user = get_user_or_404(user_id)
+    subscription = get_subscription_or_404_by_user(user_id)
+
+    subscription["credits_remaining"] = subscription.get("credits_remaining", 0) + credits
+    subscription["credits_limit"] = subscription.get("credits_limit", 0) + credits
+
+    return {
+        "message": f"Added {credits} credits to user",
+        "credits_remaining": subscription["credits_remaining"],
+        "credits_limit": subscription["credits_limit"],
+    }
+
+
 @router.put("/subscriptions/{user_id}/use-tokens", response_model=schemas.TokenUsageResponse)
 async def use_tokens(user_id: str, tokens: int):
     """Deduct tokens from a user's subscription"""
@@ -106,6 +131,37 @@ async def use_tokens(user_id: str, tokens: int):
         tokens_used=subscription["tokens_used"],
         tokens_remaining=subscription["tokens_remaining"],
         tokens_limit=subscription["tokens_limit"],
+        percentage_used=round(percentage_used, 2),
+    )
+
+
+@router.put("/subscriptions/{user_id}/use-credits", response_model=schemas.TokenUsageResponse)
+async def use_credits(user_id: str, credits: int):
+    """Deduct credits from a user's subscription (admin/test action)"""
+    if credits <= 0:
+        raise HTTPException(status_code=400, detail="Credits must be positive")
+
+    user = get_user_or_404(user_id)
+    subscription = get_subscription_or_404_by_user(user_id)
+
+    if subscription.get("credits_remaining", 0) < credits:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Insufficient credits. Required: {credits}, Available: {subscription.get('credits_remaining', 0)}",
+        )
+
+    subscription["credits_used"] = subscription.get("credits_used", 0) + credits
+    subscription["credits_remaining"] = subscription.get("credits_remaining", 0) - credits
+
+    # Reuse TokenUsageResponse schema for simplicity (it now includes credits)
+    percentage_used = 0.0
+    if subscription.get("credits_limit"):
+        percentage_used = (subscription.get("credits_used", 0) / subscription.get("credits_limit")) * 100
+
+    return schemas.TokenUsageResponse(
+        tokens_used=subscription.get("credits_used", 0),
+        tokens_remaining=subscription.get("credits_remaining", 0),
+        tokens_limit=subscription.get("credits_limit", 0),
         percentage_used=round(percentage_used, 2),
     )
 

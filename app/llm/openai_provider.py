@@ -1,8 +1,10 @@
 from typing import Optional, AsyncIterator
 import os
+import asyncio
 
 from app.llm.base import BaseLLMProvider
 from app.utils.token_counter import token_counter
+from app.utils.stream_emulation import emulate_stream_text
 
 try:
     from openai import AsyncOpenAI
@@ -57,8 +59,17 @@ class OpenAIProvider(BaseLLMProvider):
                 delta = chunk.choices[0].delta
                 if getattr(delta, "content", None):
                     yield delta.content
-        except Exception as e:
-            raise Exception(f"OpenAI streaming error: {str(e)}")
+        except Exception:
+            # Streaming not available or failed — fallback to non-streaming generate
+            try:
+                result = await self.generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature)
+                content = result.get('content', '') if isinstance(result, dict) else str(result)
+                # Emulate streaming by chunking the final content
+                async for part in emulate_stream_text(content):
+                    yield part
+            except Exception:
+                # swallow errors to avoid crashing the SSE handler
+                return
 
     def count_tokens(self, text: str) -> int:
         return token_counter.count_tokens(text, "openai")

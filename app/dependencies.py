@@ -51,6 +51,32 @@ def deduct_tokens(subscription: Dict, tokens_used: int) -> None:
     subscription["tokens_remaining"] -= tokens_used
 
 
+def check_credits_available(subscription: Dict, estimated_llm_tokens: int, model: str) -> None:
+    """Verify user has enough credits for the estimated LLM tokens for the given model."""
+    multiplier = models.MODEL_CREDIT_COSTS.get(model, models.MODEL_CREDIT_COSTS.get("default", 0.01))
+    estimated_credits = int(estimated_llm_tokens * multiplier)
+    if subscription.get("credits_remaining", 0) < estimated_credits:
+        raise HTTPException(
+            status_code=402,
+            detail=(f"Insufficient credits. Required: {estimated_credits} (est), "
+                    f"Available: {subscription.get('credits_remaining', 0)}")
+        )
+
+
+def deduct_credits(subscription: Dict, llm_tokens: int, model: str) -> int:
+    """Deduct credits from user's subscription based on LLM tokens and model multiplier.
+
+    Returns the number of credits deducted.
+    """
+    multiplier = models.MODEL_CREDIT_COSTS.get(model, models.MODEL_CREDIT_COSTS.get("default", 0.01))
+    credits_to_deduct = int(llm_tokens * multiplier)
+    # Ensure we don't go negative
+    credits_to_deduct = min(credits_to_deduct, subscription.get("credits_remaining", 0))
+    subscription["credits_used"] = subscription.get("credits_used", 0) + credits_to_deduct
+    subscription["credits_remaining"] = subscription.get("credits_remaining", 0) - credits_to_deduct
+    return credits_to_deduct
+
+
 def track_api_cost(user_id: str, provider: str, model: str, prompt_tokens: int, completion_tokens: int, cost_usd: float) -> None:
     """Track API costs for billing and analytics"""
     cost_id = str(__import__('uuid').uuid4())

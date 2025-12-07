@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 from pathlib import Path
 
 
@@ -59,6 +59,13 @@ class Settings:
         self.demo_user_email: str = os.getenv("DEMO_USER_EMAIL", "demo@example.com")
         self.demo_user_username: str = os.getenv("DEMO_USER_USERNAME", "demo_user")
         self.demo_user_password: str = os.getenv("DEMO_USER_PASSWORD", "demo123")
+        # Provider API keys (optional)
+        self.openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
+        self.anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
+        self.gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY")
+        # Gemima / provider feature flags
+        self.gemini_force_non_streaming: bool = os.getenv("GEMINI_FORCE_NON_STREAMING", "").lower() in ("1", "true", "yes")
+        self.enable_ws_streaming: bool = os.getenv("ENABLE_WS_STREAMING", "false").lower() in ("1", "true", "yes")
 
 
 settings = Settings()
