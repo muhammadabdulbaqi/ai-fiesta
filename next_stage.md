@@ -308,6 +308,8 @@ useEffect(() => {
 2. Send a test prompt
 3. Open browser DevTools → Network → EventStream
 4. Look for duplicate chunks
-5. Report back findings
+5. Report back findings 
+
+Finding: Doesn't happen on test_client.html -> likely frontend issue
 
 Once streaming is stable, we build multi-model toggle.
