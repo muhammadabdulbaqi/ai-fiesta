@@ -1,27 +1,27 @@
 "use client"
 
 import type React from "react"
-
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { ChatMessage } from "@/components/chat-message"
-import { ModelSelector } from "@/components/model-selector"
+import { ModelToggleGroup } from "@/components/model-toggle-group"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import { useChatSSE } from "@/hooks/use-chat-sse"
 import { getTokenUsage, getSubscription } from "@/lib/api"
-import { Zap, Send, AlertCircle, Sparkles } from "lucide-react"
+import { Send, AlertCircle, Sparkles } from "lucide-react"
 
 const DEMO_USER_ID = process.env.NEXT_PUBLIC_DEFAULT_USER_ID || "demo-user-1"
 
 export default function ChatPage() {
-  const [selectedModel, setSelectedModel] = useState("")
+  const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [inputValue, setInputValue] = useState("")
   const [usage, setUsage] = useState<any>(null)
   const [subscription, setSubscription] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [loadingUsage, setLoadingUsage] = useState(false)
+
+  // Auto-scroll ref
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   const { messages, sendMessage, isStreaming, error } = useChatSSE(DEMO_USER_ID)
 
@@ -37,20 +37,23 @@ export default function ChatPage() {
         setLoading(false)
       }
     }
-
     fetchInitialData()
   }, [])
 
+  // Auto-scroll effect
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!inputValue.trim() || isStreaming) return
+    if (!inputValue.trim() || isStreaming || selectedModels.length === 0) return
 
     const message = inputValue
     setInputValue("")
-    setLoadingUsage(true)
 
-    await sendMessage(message, selectedModel || "gemini-2.5-flash", (delta) => {
-      setUsage((prev) =>
+    await sendMessage(message, selectedModels, (delta) => {
+      setUsage((prev: any) =>
         prev
           ? {
               ...prev,
@@ -60,13 +63,11 @@ export default function ChatPage() {
           : null,
       )
     })
-
-    setLoadingUsage(false)
   }
 
   const handleNewChat = () => {
-    // In a real app, this would reset the conversation
     setInputValue("")
+    // Ideally clear messages via hook logic here
   }
 
   if (loading) {
@@ -78,127 +79,95 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-screen bg-background">
-      {/* Sidebar */}
+    <div className="flex h-screen bg-background font-sans">
       <Sidebar onNewChat={handleNewChat} />
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden relative">
         {/* Header */}
-        <div className="border-b border-border bg-card/50 backdrop-blur-sm p-4 flex items-center justify-between">
+        <div className="border-b border-border bg-card/50 backdrop-blur-sm p-4 flex items-center justify-between z-10 h-16 shrink-0">
           <div className="flex items-center gap-4">
-            <div>
-              <h1 className="font-semibold flex items-center gap-2">
-                <Sparkles className="w-5 h-5" />
-                AI Fiesta
-              </h1>
-              <p className="text-xs text-muted-foreground">Multi-Model AI Chat</p>
-            </div>
+            <h1 className="font-semibold flex items-center gap-2 text-lg">
+              <Sparkles className="w-5 h-5 text-primary" />
+              AI Fiesta
+            </h1>
           </div>
-
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-6 text-sm">
             {usage && (
-              <div className="flex items-center gap-4">
+              <>
                 <div className="text-right">
-                  <p className="text-xs text-muted-foreground">Tokens</p>
-                  <p className="font-semibold text-sm">
-                    {usage.tokens_remaining}/{usage.tokens_limit}
-                  </p>
+                  <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">Tokens</p>
+                  <p className="font-mono font-medium">{usage.tokens_remaining}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-muted-foreground">Credits</p>
-                  <p className="font-semibold text-sm">
-                    {usage.credits_remaining}/{usage.credits_limit}
-                  </p>
+                  <p className="text-[10px] uppercase text-muted-foreground font-bold tracking-wider">Credits</p>
+                  <p className="font-mono font-medium text-primary">{usage.credits_remaining}</p>
                 </div>
-              </div>
+              </>
             )}
           </div>
         </div>
 
-        {/* Chat Area */}
-        <div className="flex-1 overflow-y-auto p-6 no-scrollbar">
+        {/* Chat Area - Scrollable */}
+        <div className="flex-1 overflow-y-auto no-scrollbar bg-background/50">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center gap-6">
-              <div className="text-center max-w-md">
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center mx-auto mb-3">
-                  <Sparkles className="w-8 h-8 text-primary" />
-                </div>
-                <h2 className="text-xl font-semibold mb-2">Start a conversation</h2>
-                <p className="text-muted-foreground text-sm">
-                  Pick a model, type a prompt, and we’ll stream the response in real-time.
-                </p>
+            <div className="h-full flex flex-col items-center justify-center gap-6 opacity-40">
+              <div className="bg-muted rounded-full p-6">
+                 <Sparkles className="w-12 h-12 text-muted-foreground" />
               </div>
-
-              <div className="flex flex-wrap gap-2 justify-center mt-2">
-                {[
-                  "Summarize this article into 3 bullets",
-                  "Explain transformers like I’m 12",
-                  "Draft a welcome email for new users",
-                  "Brainstorm product taglines",
-                ].map((prompt) => (
-                  <Button
-                    key={prompt}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setInputValue(prompt)}
-                    className="whitespace-nowrap"
-                  >
-                    {prompt}
-                  </Button>
-                ))}
-              </div>
+              <p className="text-lg font-medium">Select models below and start the arena</p>
             </div>
           ) : (
-            <div className="max-w-3xl mx-auto">
-              {messages.map((msg, idx) => (
-                <ChatMessage key={msg.id} message={msg} isStreaming={isStreaming && idx === messages.length - 1} />
+            // REMOVED max-w constraints here to allow full width for columns
+            <div className="w-full h-full p-6">
+              {messages.map((msg) => (
+                <ChatMessage key={msg.id} message={msg} />
               ))}
+              <div ref={bottomRef} className="h-4" />
             </div>
           )}
         </div>
 
-        {/* Error Display */}
-        {error && (
-          <div className="px-6 py-3 bg-destructive/10 border border-destructive/20 rounded-lg mx-6 flex items-gap-2 gap-2">
-            <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-destructive">{error}</p>
-          </div>
-        )}
+        {/* Floating Controls Area */}
+        <div className="p-6 bg-gradient-to-t from-background via-background to-transparent z-20">
+            <div className="max-w-[95%] mx-auto space-y-4">
+                
+                {/* Error Banner */}
+                {error && (
+                    <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-center gap-2 animate-in slide-in-from-bottom-2">
+                        <AlertCircle className="w-4 h-4 text-destructive" />
+                        <p className="text-sm text-destructive font-medium">{error}</p>
+                    </div>
+                )}
 
-        {/* Input Area */}
-        <div className="border-t border-border bg-card/50 backdrop-blur-sm p-6">
-          <div className="max-w-3xl mx-auto space-y-4">
-            {/* Model Selector and Options */}
-            <div className="flex flex-col md:flex-row items-center gap-3">
-              <ModelSelector value={selectedModel} onChange={setSelectedModel} userTier={subscription?.tier_id} />
+                {/* Input Container */}
+                <div className="bg-card border border-border rounded-xl shadow-lg p-4 space-y-4">
+                    <ModelToggleGroup 
+                        selectedModels={selectedModels} 
+                        onSelectionChange={setSelectedModels}
+                        userTier={subscription?.tier_id}
+                    />
 
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="gap-1 hidden md:flex">
-                  <Zap className="w-3 h-3" />
-                  Super Fiesta
-                </Badge>
-              </div>
+                    <form onSubmit={handleSendMessage} className="flex gap-3 relative">
+                        <Input
+                            placeholder={selectedModels.length === 0 ? "Select at least one model..." : `Ask ${selectedModels.length} models...`}
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            disabled={isStreaming || selectedModels.length === 0}
+                            className="flex-1 pr-12 py-6 text-base shadow-inner bg-muted/20 border-muted-foreground/20"
+                        />
+                        <Button 
+                            type="submit" 
+                            disabled={isStreaming || !inputValue.trim() || selectedModels.length === 0} 
+                            size="icon" 
+                            className="absolute right-1.5 top-1.5 h-9 w-9 rounded-lg transition-all shadow-sm"
+                        >
+                            <Send className="w-4 h-4" />
+                        </Button>
+                    </form>
+                </div>
             </div>
-
-            {/* Chat Input */}
-            <form onSubmit={handleSendMessage} className="flex gap-3">
-              <Input
-                placeholder="Ask me anything..."
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                disabled={isStreaming}
-                className="flex-1"
-              />
-              <Button type="submit" disabled={isStreaming || !inputValue.trim()} size="icon" className="rounded-full">
-                <Send className="w-4 h-4" />
-              </Button>
-            </form>
-
-          </div>
         </div>
       </div>
     </div>
   )
 }
-

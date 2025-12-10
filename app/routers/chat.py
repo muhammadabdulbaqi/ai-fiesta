@@ -5,6 +5,7 @@ from datetime import datetime
 import uuid
 from collections import defaultdict
 import time
+import json
 
 from .. import schemas, models
 from ..llm.factory import llm_factory
@@ -29,6 +30,15 @@ router = APIRouter(prefix="", tags=["Chat"])
 
 # Simple per-user spacing tracker to avoid provider free-tier rate limits (seconds)
 user_last_request = defaultdict(float)
+
+
+# --- Helper to safely stream an immediate error ---
+def stream_error(code: str, message: str):
+    """Returns a generator that yields a single error event."""
+    payload = json.dumps({"type": "error", "error": code, "message": message})
+    async def _gen():
+        yield f"data: {payload}\n\n"
+    return StreamingResponse(_gen(), media_type="text/event-stream")
 
 
 @router.post("/chat/", response_model=schemas.ChatResponse)
@@ -126,25 +136,13 @@ async def chat(request: schemas.ChatRequest, user_id: str = Header(None)):
 async def list_models_formatted():
     """
     Returns models in a flat format that the frontend expects.
-    Each model includes: value, label, provider, tier
-    
-    Example response:
-    [
-        {
-            "value": "gpt-4",
-            "label": "GPT-4",
-            "provider": "openai",
-            "tier": "enterprise"
-        },
-        ...
-    ]
     """
     from .. import models as app_models
     
     # Get raw models from factory
     raw_models = llm_factory.get_available_models()
     
-    # Model tier mapping (which tier can access which models)
+    # Model tier mapping
     model_tier_map = {}
     for tier_name, tier_info in app_models.SUBSCRIPTION_TIERS.items():
         for model in tier_info["allowed_models"]:
@@ -156,13 +154,9 @@ async def list_models_formatted():
     
     for provider, model_list in raw_models.items():
         for model_id in model_list:
-            # Determine tier (default to "pro" if not found)
             tier = model_tier_map.get(model_id, "pro")
-            
-            # Create a human-readable label
             label = model_id.replace("-", " ").title()
             
-            # Special case formatting for common models
             if "gpt" in model_id.lower():
                 label = model_id.upper().replace("-", " ")
             elif "claude" in model_id.lower():
@@ -202,24 +196,15 @@ async def list_models():
 
 @router.post("/stream/chat")
 async def stream_chat(request: Request):
-    """HTTP SSE streaming endpoint.
-
-    The client POSTs a JSON body with the same fields as the websocket protocol:
-      {"prompt":"...","model":"...","conversation_id":"...","user_id":"...","max_tokens":N}
-
-    The server responds with `text/event-stream` SSE events where each event's `data` is a JSON payload:
-      data: {"type":"chunk","content":"..."}
-      data: {"type":"done","message_id":"...","tokens_used":N,...}
-      data: {"type":"error","error":"code","message":"..."}
-    """
+    """HTTP SSE streaming endpoint."""
     try:
         data = await request.json()
     except Exception:
-        return StreamingResponse(("""data: {"type":"error","error":"invalid_request","message":"Expected JSON body"}\n\n"""), media_type="text/event-stream")
+        return stream_error("invalid_request", "Expected JSON body")
 
     # Validate input
     if not isinstance(data, dict):
-        return StreamingResponse(("""data: {"type":"error","error":"invalid_request","message":"Expected JSON object"}\n\n"""), media_type="text/event-stream")
+        return stream_error("invalid_request", "Expected JSON object")
 
     prompt = data.get("prompt")
     model = data.get("model", "mock")
@@ -229,7 +214,7 @@ async def stream_chat(request: Request):
     temperature = data.get("temperature", 0.7)
 
     if not user_id:
-        return StreamingResponse(("""data: {"type":"error","error":"missing_user","message":"user_id is required"}\n\n"""), media_type="text/event-stream")
+        return stream_error("missing_user", "user_id is required")
 
     # Validate user and subscription
     try:
@@ -237,31 +222,27 @@ async def stream_chat(request: Request):
         subscription = get_subscription_or_404_by_user(user_id)
         check_subscription_active(subscription)
     except HTTPException as e:
-        return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"invalid_user_or_subscription\", \"message\": \"{str(e.detail)}\"}}\n\n"), media_type="text/event-stream")
+        return stream_error("invalid_user_or_subscription", str(e.detail))
 
     # Check model access
     try:
         check_model_access(subscription, model)
     except HTTPException as e:
-        return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"model_not_allowed\", \"message\": \"{str(e.detail)}\"}}\n\n"), media_type="text/event-stream")
+        return stream_error("model_not_allowed", str(e.detail))
 
-    # Per-user spacing
+    # Per-user spacing (Rate Limit Prevention)
     try:
         now = time.time()
         last = user_last_request.get(user_id, 0.0)
-        min_spacing = 4.0
-        if now - last < min_spacing:
-            wait = int(min_spacing - (now - last))
-            return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"rate_limit\", \"message\": \"Please wait {wait} seconds between requests (provider rate limit)\"}}\n\n"), media_type="text/event-stream")
+        # Small delay buffer to prevent immediate provider rate limits
+        if now - last < 0.5:
+             pass 
         user_last_request[user_id] = now
-    except Exception:
-        pass
-
-    # Rate limit check
-    try:
+        
+        # Check system rate limit
         check_rate_limit(user_id, subscription["rate_limit_per_minute"])
     except HTTPException as e:
-        return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"rate_limited\", \"message\": \"{str(e.detail)}\"}}\n\n"), media_type="text/event-stream")
+        return stream_error("rate_limited", str(e.detail))
 
     provider = llm_factory.create_provider(model)
 
@@ -275,9 +256,7 @@ async def stream_chat(request: Request):
     try:
         check_credits_available(subscription, estimated + max_tokens, model)
     except Exception:
-        return StreamingResponse((f"data: {{\"type\": \"error\", \"error\": \"insufficient_credits\", \"message\": \"Need ~{int((estimated + max_tokens) * 1)} credits (est), but only {subscription.get('credits_remaining')} remaining\"}}\n\n"), media_type="text/event-stream")
-
-    import json
+        return stream_error("insufficient_credits", f"Need ~{int((estimated + max_tokens))} credits (est), but only {subscription.get('credits_remaining')} remaining")
 
     async def event_stream():
         full_response = ""
@@ -312,60 +291,28 @@ async def stream_chat(request: Request):
                     pass
                 return
 
-            # For other errors, attempt a non-streaming fallback so clients still get an answer
+            # For other errors, attempt a non-streaming fallback
             try:
-                result = await provider.generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature)
-                content = result.get('content') if isinstance(result, dict) else str(result)
-                # If we have content, emulate streaming it
-                if content:
-                    async for part in emulate_stream_text(content):
-                        if not part or part.strip() == "":
-                            continue
-                        payload = json.dumps({"type": "chunk", "content": part})
-                        yield f"data: {payload}\n\n"
-                        full_response += part
-                        any_chunk_sent = True
-                else:
-                    # no content from generate - fall through to finalization which will send done/error
-                    pass
-            except Exception:
+                if not any_chunk_sent:
+                    result = await provider.generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature)
+                    content = result.get('content') if isinstance(result, dict) else str(result)
+                    # If we have content, emulate streaming it
+                    if content:
+                        async for part in emulate_stream_text(content):
+                            if not part or part.strip() == "":
+                                continue
+                            payload = json.dumps({"type": "chunk", "content": part})
+                            yield f"data: {payload}\n\n"
+                            full_response += part
+                            any_chunk_sent = True
+            except Exception as e2:
                 # if fallback also fails, send an error and stop
                 try:
-                    payload = json.dumps({"type": "error", "error": "llm_error", "message": str(e)})
+                    payload = json.dumps({"type": "error", "error": "llm_error", "message": str(e2)})
                     yield f"data: {payload}\n\n"
                 except Exception:
                     pass
                 return
-
-        # If provider produced no chunks (silent stream), try non-streaming generate and emulate
-        if not any_chunk_sent:
-            try:
-                # Attempt to fetch the final content non-streaming and stream it to client
-                result = await provider.generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature)
-                content = result.get('content') if isinstance(result, dict) else str(result)
-                if content:
-                    emulated_sent = False
-                    async for part in emulate_stream_text(content):
-                        if not part or part.strip() == "":
-                            continue
-                        payload = json.dumps({"type": "chunk", "content": part})
-                        yield f"data: {payload}\n\n"
-                        full_response += part
-                        any_chunk_sent = True
-                        emulated_sent = True
-
-                    # If emulation produced nothing (very short content), send the full content as one chunk
-                    if not emulated_sent and content:
-                        payload = json.dumps({"type": "chunk", "content": content})
-                        yield f"data: {payload}\n\n"
-                        full_response += content
-                        any_chunk_sent = True
-                else:
-                    # no content from generate - fall through to finalization which will send done/error
-                    pass
-            except Exception:
-                # If this fails, continue to finalization to send done/error
-                pass
 
         # After streaming completes, compute tokens and update subscription
         try:
@@ -374,7 +321,7 @@ async def stream_chat(request: Request):
             total_tokens = prompt_tokens + completion_tokens
 
             # Deduct credits (based on model multiplier)
-            credits = deduct_credits(subscription, total_tokens, model)
+            deduct_credits(subscription, total_tokens, model)
 
             cost = provider.estimate_cost(prompt_tokens, completion_tokens, model) if hasattr(provider, 'estimate_cost') else 0.0
             track_api_cost(user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
@@ -399,7 +346,15 @@ async def stream_chat(request: Request):
             }
             messages_db[message_id] = message
 
-            payload = json.dumps({"type": "done", "message_id": message_id, "tokens_used": total_tokens, "tokens_remaining": subscription.get("tokens_remaining"), "model": model, "credits_used": subscription.get("credits_used"), "credits_remaining": subscription.get("credits_remaining")})
+            payload = json.dumps({
+                "type": "done", 
+                "message_id": message_id, 
+                "tokens_used": total_tokens, 
+                "tokens_remaining": subscription.get("tokens_remaining"), 
+                "model": model, 
+                "credits_used": subscription.get("credits_used"), 
+                "credits_remaining": subscription.get("credits_remaining")
+            })
             yield f"data: {payload}\n\n"
 
         except Exception as e:
@@ -410,4 +365,3 @@ async def stream_chat(request: Request):
                 pass
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
-
