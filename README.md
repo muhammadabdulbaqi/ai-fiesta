@@ -142,7 +142,8 @@ python testing/test_gemini.py
 ### 🚧 Phase 2: Stability & Experience (Current Focus)
 - [ ] **Fix Streaming Bug:** Resolve issue where text duplicates/splits mid-word in the UI.
 - [ ] **Multi-Model Toggle:** Allow selecting multiple active models to compare responses side-by-side.
-- [ ] **Conversation History:** Persist chat history in the UI sidebar.
+- [ ] **Conversation History:** Persist chat history in the UI sidebar -> possibly using Langchain/Langraph
+- [ ] **Token consumption:** Curerntly showing token consumption -> improve with db integration ; but also token consumption for LLM providers -> test with notebook first
 
 ### 🔮 Phase 3: Production Hardening (Next)
 - [ ] **Database Integration:** Migrate from in-memory dicts to PostgreSQL + SQLModel.
@@ -156,3 +157,4 @@ python testing/test_gemini.py
 - **CORS Errors:** Ensure `CORS_ALLOW_ORIGINS` in `app/config.py` or `.env` matches your frontend URL (`http://localhost:3000`).
 - **Streaming Issues:** If no text appears, check the backend console. If `google-generativeai` is missing, the backend defaults to a Mock provider.
 - **"429 Quota Exceeded":** This is common with free tier keys. The backend handles this gracefully by sending an error event to the client.
+
