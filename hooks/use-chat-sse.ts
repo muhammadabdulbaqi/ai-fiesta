@@ -99,19 +99,41 @@ export function useChatSSE(userId: string) {
                 try {
                   const data: SSEMessage = JSON.parse(jsonStr)
 
-                  if (data.type === "chunk" && data.content) {
+                                    if (data.type === "chunk" && data.content) {
                     setMessages((prev) => {
-                      const updated = [...prev]
-                      updated[updated.length - 1].content += data.content || ""
-                      return updated
+                      // 1. Copy the previous array
+                      const updatedMessages = [...prev]
+                      
+                      // 2. Identify the last message index
+                      const lastIndex = updatedMessages.length - 1
+                      
+                      // 3. Create a shallow COPY of the last message object
+                      // (Crucial: Don't mutate prev[lastIndex] directly!)
+                      const updatedMessage = {
+                        ...updatedMessages[lastIndex],
+                        content: updatedMessages[lastIndex].content + (data.content || "")
+                      }
+
+                      // 4. Replace the message in the new array
+                      updatedMessages[lastIndex] = updatedMessage
+                      
+                      return updatedMessages
                     })
                   } else if (data.type === "done") {
                     setMessages((prev) => {
-                      const updated = [...prev]
-                      updated[updated.length - 1].tokens_used = data.tokens_used
-                      updated[updated.length - 1].credits_used = data.credits_used
-                      updated[updated.length - 1].model = data.model
-                      return updated
+                      const updatedMessages = [...prev]
+                      const lastIndex = updatedMessages.length - 1
+                      
+                      // Same logic here: Copy before modifying
+                      const updatedMessage = {
+                        ...updatedMessages[lastIndex],
+                        tokens_used: data.tokens_used,
+                        credits_used: data.credits_used,
+                        model: data.model
+                      }
+                      
+                      updatedMessages[lastIndex] = updatedMessage
+                      return updatedMessages
                     })
 
                     if (data.tokens_remaining !== undefined) {
