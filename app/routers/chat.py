@@ -122,6 +122,67 @@ async def chat(request: schemas.ChatRequest, user_id: str = Header(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/chat/models/formatted")
+async def list_models_formatted():
+    """
+    Returns models in a flat format that the frontend expects.
+    Each model includes: value, label, provider, tier
+    
+    Example response:
+    [
+        {
+            "value": "gpt-4",
+            "label": "GPT-4",
+            "provider": "openai",
+            "tier": "enterprise"
+        },
+        ...
+    ]
+    """
+    from .. import models as app_models
+    
+    # Get raw models from factory
+    raw_models = llm_factory.get_available_models()
+    
+    # Model tier mapping (which tier can access which models)
+    model_tier_map = {}
+    for tier_name, tier_info in app_models.SUBSCRIPTION_TIERS.items():
+        for model in tier_info["allowed_models"]:
+            if model not in model_tier_map:
+                model_tier_map[model] = tier_name
+    
+    # Flatten the nested provider structure
+    formatted_models = []
+    
+    for provider, model_list in raw_models.items():
+        for model_id in model_list:
+            # Determine tier (default to "pro" if not found)
+            tier = model_tier_map.get(model_id, "pro")
+            
+            # Create a human-readable label
+            label = model_id.replace("-", " ").title()
+            
+            # Special case formatting for common models
+            if "gpt" in model_id.lower():
+                label = model_id.upper().replace("-", " ")
+            elif "claude" in model_id.lower():
+                label = "Claude " + model_id.split("-")[1].capitalize()
+            elif "gemini" in model_id.lower():
+                parts = model_id.split("-")
+                if len(parts) >= 2:
+                    label = f"Gemini {parts[1].capitalize()}"
+                    if len(parts) >= 3:
+                        label += f" {parts[2].capitalize()}"
+            
+            formatted_models.append({
+                "value": model_id,
+                "label": label,
+                "provider": provider,
+                "tier": tier
+            })
+    
+    return formatted_models
+
 
 @router.get("/conversations/")
 async def list_conversations():

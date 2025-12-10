@@ -176,18 +176,10 @@ export async function useCredits(userId: string, credits: number) {
 }
 
 export async function getAvailableModels(): Promise<Model[]> {
-  const res = await fetch(`${API_URL}/chat/models`)
+  const res = await fetch(`${API_URL}/chat/models/formatted`)
   if (!res.ok) throw new Error("Failed to fetch models")
   const data = await res.json()
-  // Transform FastAPI response format
-  if (Array.isArray(data)) {
-    return data.map((model: any) => ({
-      value: model.id || model.value || model.name,
-      label: model.name || model.label || model.id,
-      tier: model.tier || "free",
-      provider: model.provider || "mock",
-    }))
-  }
-  return []
+  
+  // Data is already in the correct format from the new endpoint
+  return data
 }
-
