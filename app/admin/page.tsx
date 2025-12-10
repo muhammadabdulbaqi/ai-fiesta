@@ -5,13 +5,26 @@ import Link from "next/link"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { getAdminStats, getAllSubscriptions, type AdminStats, type Subscription } from "@/lib/api"
+import {
+  getAdminStats,
+  getAllSubscriptions,
+  addTokens,
+  addCredits,
+  upgradeSubscription,
+  type AdminStats,
+  type Subscription,
+} from "@/lib/api"
 import { ArrowLeft, Users, Zap, CreditCard, TrendingUp } from "lucide-react"
 
 export default function AdminPage() {
   const [stats, setStats] = useState<AdminStats | null>(null)
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [selectedUser, setSelectedUser] = useState<string>("")
+  const [tokensToAdd, setTokensToAdd] = useState<string>("")
+  const [creditsToAdd, setCreditsToAdd] = useState<string>("")
+  const [upgradeTier, setUpgradeTier] = useState<string>("pro")
 
   useEffect(() => {
     const fetchData = async () => {
@@ -19,6 +32,9 @@ export default function AdminPage() {
         const [statsData, subsData] = await Promise.all([getAdminStats(), getAllSubscriptions()])
         setStats(statsData)
         setSubscriptions(subsData)
+        if (subsData.length > 0) {
+          setSelectedUser(subsData[0].user_id)
+        }
       } catch (err) {
         console.error("Failed to fetch admin data:", err)
       } finally {
@@ -28,6 +44,53 @@ export default function AdminPage() {
 
     fetchData()
   }, [])
+
+  const refreshSubs = async () => {
+    const subs = await getAllSubscriptions()
+    setSubscriptions(subs)
+    if (!selectedUser && subs.length > 0) setSelectedUser(subs[0].user_id)
+  }
+
+  const handleAddTokens = async () => {
+    if (!selectedUser || !tokensToAdd) return
+    setBusy(true)
+    try {
+      await addTokens(selectedUser, Number(tokensToAdd))
+      await refreshSubs()
+      setTokensToAdd("")
+    } catch (err) {
+      console.error("Failed to add tokens", err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleAddCredits = async () => {
+    if (!selectedUser || !creditsToAdd) return
+    setBusy(true)
+    try {
+      await addCredits(selectedUser, Number(creditsToAdd))
+      await refreshSubs()
+      setCreditsToAdd("")
+    } catch (err) {
+      console.error("Failed to add credits", err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleUpgrade = async () => {
+    if (!selectedUser || !upgradeTier) return
+    setBusy(true)
+    try {
+      await upgradeSubscription(selectedUser, upgradeTier)
+      await refreshSubs()
+    } catch (err) {
+      console.error("Failed to upgrade subscription", err)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -128,6 +191,78 @@ export default function AdminPage() {
         {/* Users Table */}
         <Card className="p-6">
           <h2 className="text-lg font-semibold mb-4">Users & Subscriptions</h2>
+          <div className="mb-4 grid gap-3 md:grid-cols-3">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">Select user</label>
+              <select
+                className="border rounded-md px-3 py-2 bg-background"
+                value={selectedUser}
+                onChange={(e) => setSelectedUser(e.target.value)}
+              >
+                {subscriptions.map((sub) => (
+                  <option key={sub.user_id} value={sub.user_id}>
+                    {sub.user_id} ({sub.tier_name})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">Add tokens</label>
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 border rounded-md px-3 py-2 bg-background"
+                  type="number"
+                  min="1"
+                  value={tokensToAdd}
+                  onChange={(e) => setTokensToAdd(e.target.value)}
+                  placeholder="e.g. 1000"
+                />
+                <Button variant="outline" disabled={busy || !tokensToAdd} onClick={handleAddTokens}>
+                  Add
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">Add credits</label>
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 border rounded-md px-3 py-2 bg-background"
+                  type="number"
+                  min="1"
+                  value={creditsToAdd}
+                  onChange={(e) => setCreditsToAdd(e.target.value)}
+                  placeholder="e.g. 500"
+                />
+                <Button variant="outline" disabled={busy || !creditsToAdd} onClick={handleAddCredits}>
+                  Add
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 md:col-span-3">
+              <label className="text-sm font-medium">Upgrade tier</label>
+              <div className="flex flex-col md:flex-row gap-2">
+                <select
+                  className="border rounded-md px-3 py-2 bg-background md:w-48"
+                  value={upgradeTier}
+                  onChange={(e) => setUpgradeTier(e.target.value)}
+                >
+                  <option value="free">Free</option>
+                  <option value="pro">Pro</option>
+                  <option value="enterprise">Enterprise</option>
+                </select>
+                <Button variant="outline" disabled={busy} onClick={handleUpgrade}>
+                  Upgrade
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Uses existing endpoints: add tokens/credits and tier upgrade are executed immediately.
+              </p>
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>

@@ -8,11 +8,10 @@ import { ChatMessage } from "@/components/chat-message"
 import { ModelSelector } from "@/components/model-selector"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { useChatSSE } from "@/hooks/use-chat-sse"
 import { getTokenUsage, getSubscription } from "@/lib/api"
-import { Zap, ImageIcon, Search, Send, AlertCircle, Sparkles } from "lucide-react"
+import { Zap, Send, AlertCircle, Sparkles } from "lucide-react"
 
 const DEMO_USER_ID = process.env.NEXT_PUBLIC_DEFAULT_USER_ID || "demo-user-1"
 
@@ -98,9 +97,8 @@ export default function ChatPage() {
           </div>
 
           <div className="flex items-center gap-6">
-            {/* Usage Stats */}
             {usage && (
-              <div className="hidden md:flex items-center gap-6">
+              <div className="flex items-center gap-4">
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Tokens</p>
                   <p className="font-semibold text-sm">
@@ -115,43 +113,40 @@ export default function ChatPage() {
                 </div>
               </div>
             )}
-
-            {/* Upgrade Button */}
-            <Button className="bg-primary hover:bg-primary/90 rounded-full">Upgrade to unlock</Button>
           </div>
         </div>
 
         {/* Chat Area */}
         <div className="flex-1 overflow-y-auto p-6 no-scrollbar">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center gap-8">
-              {/* Empty State */}
+            <div className="h-full flex flex-col items-center justify-center gap-6">
               <div className="text-center max-w-md">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center mx-auto mb-4">
-                  <Sparkles className="w-10 h-10 text-primary" />
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center mx-auto mb-3">
+                  <Sparkles className="w-8 h-8 text-primary" />
                 </div>
-                <h2 className="text-2xl font-bold mb-2">Welcome to AI Fiesta</h2>
-                <p className="text-muted-foreground">Start a conversation with your favorite AI model</p>
+                <h2 className="text-xl font-semibold mb-2">Start a conversation</h2>
+                <p className="text-muted-foreground text-sm">
+                  Pick a model, type a prompt, and we’ll stream the response in real-time.
+                </p>
               </div>
 
-              {/* Explore Section */}
-              <div className="w-full">
-                <h3 className="font-semibold mb-4 text-center">Explore</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  {[
-                    { icon: "🧠", name: "Albert Einstein", role: "Physicist" },
-                    { icon: "💼", name: "Career Coach", role: "Guidance" },
-                  ].map((persona) => (
-                    <Card
-                      key={persona.name}
-                      className="p-4 cursor-pointer hover:bg-card/80 transition-colors text-center"
-                    >
-                      <div className="text-4xl mb-2">{persona.icon}</div>
-                      <p className="font-semibold">{persona.name}</p>
-                      <p className="text-xs text-muted-foreground">{persona.role}</p>
-                    </Card>
-                  ))}
-                </div>
+              <div className="flex flex-wrap gap-2 justify-center mt-2">
+                {[
+                  "Summarize this article into 3 bullets",
+                  "Explain transformers like I’m 12",
+                  "Draft a welcome email for new users",
+                  "Brainstorm product taglines",
+                ].map((prompt) => (
+                  <Button
+                    key={prompt}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setInputValue(prompt)}
+                    className="whitespace-nowrap"
+                  >
+                    {prompt}
+                  </Button>
+                ))}
               </div>
             </div>
           ) : (
@@ -200,17 +195,6 @@ export default function ChatPage() {
               </Button>
             </form>
 
-            {/* Action Buttons */}
-            <div className="flex gap-2 flex-wrap">
-              <Button variant="outline" size="sm" className="gap-2 bg-transparent">
-                <Search className="w-4 h-4" />
-                Web Search
-              </Button>
-              <Button variant="outline" size="sm" className="gap-2 bg-transparent">
-                <ImageIcon className="w-4 h-4" />
-                Generate Image
-              </Button>
-            </div>
           </div>
         </div>
       </div>

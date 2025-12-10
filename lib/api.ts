@@ -127,6 +127,54 @@ export async function getAllSubscriptions(): Promise<Subscription[]> {
   return []
 }
 
+export async function addTokens(userId: string, tokens: number) {
+  const res = await fetch(`${API_URL}/subscriptions/${userId}/add-tokens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tokens),
+  })
+  if (!res.ok) throw new Error("Failed to add tokens")
+  return res.json()
+}
+
+export async function addCredits(userId: string, credits: number) {
+  const res = await fetch(`${API_URL}/subscriptions/${userId}/add-credits`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(credits),
+  })
+  if (!res.ok) throw new Error("Failed to add credits")
+  return res.json()
+}
+
+export async function upgradeSubscription(userId: string, tier: string) {
+  const res = await fetch(`${API_URL}/subscriptions/${userId}/upgrade?tier=${encodeURIComponent(tier)}`, {
+    method: "POST",
+  })
+  if (!res.ok) throw new Error("Failed to upgrade subscription")
+  return res.json()
+}
+
+export async function useTokens(userId: string, tokens: number) {
+  const res = await fetch(`${API_URL}/subscriptions/${userId}/use-tokens`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tokens),
+  })
+  if (!res.ok) throw new Error("Failed to deduct tokens")
+  return res.json()
+}
+
+export async function useCredits(userId: string, credits: number) {
+  const res = await fetch(`${API_URL}/subscriptions/${userId}/use-credits`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(credits),
+  })
+  if (!res.ok) throw new Error("Failed to deduct credits")
+  return res.json()
+}
+
 export async function getAvailableModels(): Promise<Model[]> {
   const res = await fetch(`${API_URL}/chat/models`)
   if (!res.ok) throw new Error("Failed to fetch models")
