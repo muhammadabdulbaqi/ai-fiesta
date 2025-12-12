@@ -1,21 +1,101 @@
-"""Application entrypoint. Minimal app that composes routers and settings."""
+"""Application entrypoint."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import os
 from fastapi.responses import FileResponse
 
 from app.config import settings
+from app.database import init_db
 from app.routers import users as users_router
 from app.routers import subscriptions as subscriptions_router
 from app.routers import chat as chat_router
 from app.routers import admin as admin_router
 from app import models
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize on startup"""
+    # Initialize database if enabled
+    if settings.use_database:
+        await init_db()
+        print("✅ Database initialized")
+    
+    # Create demo user (in-memory OR database)
+    from datetime import datetime
+    
+    demo_user_id = "demo-user-1"
+    
+    if settings.use_database:
+        # Create demo user in database
+        from app.services import user_service
+        from app.database import async_session_maker
+        
+        async with async_session_maker() as db:
+            existing = await user_service.get_user_by_id(db, demo_user_id)
+            if not existing:
+                # Create with specific ID
+                from app.db_models import User, Subscription
+                
+                user = User(
+                    id=demo_user_id,
+                    email=settings.demo_user_email,
+                    username=settings.demo_user_username,
+                    hashed_password=f"hashed_{settings.demo_user_password}",
+                    is_active=True,
+                )
+                db.add(user)
+                await db.flush()
+                
+                tier = models.SUBSCRIPTION_TIERS["free"]
+                subscription = Subscription(
+                    user_id=user.id,
+                    tier_id=tier["tier_id"],
+                    tier_name=tier["name"],
+                    plan_type="free",
+                    allowed_models=tier["allowed_models"],
+                    tokens_limit=tier["tokens_per_month"],
+                    tokens_used=0,
+                    tokens_remaining=tier["tokens_per_month"],
+                    credits_limit=tier.get("credits_per_month", tier["tokens_per_month"]),
+                    credits_used=0,
+                    credits_remaining=tier.get("credits_per_month", tier["tokens_per_month"]),
+                    monthly_cost_usd=tier["cost_usd"],
+                    rate_limit_per_minute=tier["rate_limit_per_minute"],
+                )
+                db.add(subscription)
+                await db.commit()
+                
+                print(f"✅ Demo user created in database: {user.email}")
+    else:
+        # In-memory mode (existing logic)
+        demo_user = {
+            "id": demo_user_id,
+            "email": settings.demo_user_email,
+            "username": settings.demo_user_username,
+            "hashed_password": f"hashed_{settings.demo_user_password}",
+            "is_active": True,
+            "created_at": datetime.now(),
+        }
+        
+        if demo_user_id not in models.users_db:
+            models.users_db[demo_user_id] = demo_user
+        
+        demo_subscription = models.create_default_subscription(demo_user_id, "free")
+        print(f"✅ Demo user ready (in-memory): {demo_user['email']}")
+    
+    yield
+    
+    print("👋 Shutting down...")
+
+
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
     docs_url=settings.docs_url,
     redoc_url=settings.redoc_url,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -39,55 +119,26 @@ async def root():
         "version": settings.version,
         "docs": settings.docs_url,
         "health": "/health",
+        "mode": "database" if settings.use_database else "in-memory",
     }
 
 
 @app.get("/health", tags=["Health"])
 async def health_check():
     from datetime import datetime
-
+    
     return {
         "status": "healthy",
         "timestamp": datetime.now(),
         "version": settings.version,
+        "database": settings.use_database,
     }
 
 
 @app.get("/test_client.html", include_in_schema=False)
 async def serve_test_client():
-    """Serve the local HTML test client for WebSocket streaming tests."""
+    """Serve the local HTML test client."""
     client_path = os.path.join(os.getcwd(), "test_client.html")
     if not os.path.exists(client_path):
         return {"error": "test_client.html not found in project root"}
     return FileResponse(client_path, media_type="text/html")
-
-
-@app.on_event("startup")
-async def startup_event():
-    # Create demo user and subscription (kept for backwards compatibility)
-    import uuid
-    from datetime import datetime
-    # Create a deterministic demo user for local testing so the test client
-    # can use a stable `user_id` like `demo-user-1`.
-    demo_user_id = "demo-user-1"
-    demo_user = {
-        "id": demo_user_id,
-        "email": settings.demo_user_email,
-        "username": settings.demo_user_username,
-        "hashed_password": f"hashed_{settings.demo_user_password}",
-        "is_active": True,
-        "created_at": datetime.now(),
-    }
-
-    # Only add if not present (avoid overwriting existing demo user)
-    if demo_user_id not in models.users_db:
-        models.users_db[demo_user_id] = demo_user
-
-    # Give the demo user a free subscription (flash Gemini is allowed on free)
-    demo_subscription = models.create_default_subscription(demo_user_id, "free")
-    demo_subscription["tokens_used"] = 0
-    demo_subscription["tokens_remaining"] = demo_subscription["tokens_limit"]
-    demo_subscription["credits_used"] = 0
-    demo_subscription["credits_remaining"] = demo_subscription.get("credits_limit", demo_subscription.get("tokens_limit"))
-
-    print(f"✅ Demo user ready: {demo_user['email']} (ID: {demo_user_id})")

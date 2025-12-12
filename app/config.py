@@ -66,6 +66,12 @@ class Settings:
         # Gemima / provider feature flags
         self.gemini_force_non_streaming: bool = os.getenv("GEMINI_FORCE_NON_STREAMING", "").lower() in ("1", "true", "yes")
         self.enable_ws_streaming: bool = os.getenv("ENABLE_WS_STREAMING", "false").lower() in ("1", "true", "yes")
+        # Database settings
+        self.database_url: str = os.getenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://fiesta_user:fiesta_pass@localhost:5432/fiesta_db"
+        )
+        self.use_database: bool = os.getenv("USE_DATABASE", "false").lower() in ("1", "true", "yes")
 
 
 settings = Settings()

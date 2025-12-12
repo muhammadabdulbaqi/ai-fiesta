@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException, Header, Request
+from fastapi import APIRouter, HTTPException, Header, Request, Depends
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 import os
 from datetime import datetime
 import uuid
@@ -8,7 +9,15 @@ import time
 import json
 
 from .. import schemas, models
+from ..config import settings
 from ..llm.factory import llm_factory
+from ..utils.stream_emulation import emulate_stream_text
+
+# Database Imports
+from app.database import get_db
+from app.services import user_service, chat_service
+
+# Legacy In-Memory Imports
 from ..dependencies import (
     conversations_db,
     messages_db,
@@ -16,19 +25,16 @@ from ..dependencies import (
     get_subscription_or_404_by_user,
     check_subscription_active,
     check_model_access,
-    check_tokens_available,
-    deduct_tokens,
     check_credits_available,
     deduct_credits,
     track_api_cost,
     track_real_api_usage,
     check_rate_limit,
 )
-from ..utils.stream_emulation import emulate_stream_text
 
 router = APIRouter(prefix="", tags=["Chat"])
 
-# Simple per-user spacing tracker to avoid provider free-tier rate limits (seconds)
+# Simple per-user spacing tracker (In-memory is fine for rate limiting for now)
 user_last_request = defaultdict(float)
 
 
@@ -42,34 +48,56 @@ def stream_error(code: str, message: str):
 
 
 @router.post("/chat/", response_model=schemas.ChatResponse)
-async def chat(request: schemas.ChatRequest, user_id: str = Header(None)):
+async def chat(
+    request: schemas.ChatRequest, 
+    user_id: str = Header(None),
+    db: AsyncSession = Depends(get_db)
+):
     """Chat endpoint with real LLMs and subscription management"""
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing user-id header")
 
-    # Check user exists
-    user = get_user_or_404(user_id)
-    
-    # Get subscription and validate
-    subscription = get_subscription_or_404_by_user(user_id)
-    check_subscription_active(subscription)
-    
     model = request.model or "mock"
+    subscription = None
     
-    # Check model access
-    check_model_access(subscription, model)
-    
-    # Check rate limit
-    check_rate_limit(user_id, subscription["rate_limit_per_minute"])
-    
-    # Create provider
+    # ---------------------------------------------------------
+    # 1. VALIDATION & SETUP
+    # ---------------------------------------------------------
+    if settings.use_database:
+        # DB PATH
+        user = await user_service.get_user_by_id(db, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        subscription = await user_service.get_subscription(db, user_id)
+        if not subscription or subscription.status != "active":
+            raise HTTPException(status_code=403, detail="Subscription inactive")
+            
+        if model not in subscription.allowed_models:
+            raise HTTPException(status_code=403, detail=f"Model {model} not allowed")
+    else:
+        # LEGACY PATH
+        user = get_user_or_404(user_id)
+        subscription = get_subscription_or_404_by_user(user_id)
+        check_subscription_active(subscription)
+        check_model_access(subscription, model)
+        check_rate_limit(user_id, subscription["rate_limit_per_minute"])
+
+    # ---------------------------------------------------------
+    # 2. GENERATION
+    # ---------------------------------------------------------
     provider = llm_factory.create_provider(model)
-    
-    # Estimate tokens and check credits
     estimated = provider.count_tokens(request.prompt)
-    # Use credits-based check (conservative: include requested max_tokens)
-    check_credits_available(subscription, estimated + (request.max_tokens or 1000), model)
     
+    # Check credits logic (simplified check before generation)
+    credits_needed = int((estimated + (request.max_tokens or 1000)) * models.MODEL_CREDIT_COSTS.get(model, 0.01))
+    
+    if settings.use_database:
+        if subscription.credits_remaining < credits_needed:
+             raise HTTPException(status_code=402, detail="Insufficient credits")
+    else:
+        check_credits_available(subscription, estimated + (request.max_tokens or 1000), model)
+
     try:
         # Call LLM
         result = await provider.generate(
@@ -79,185 +107,157 @@ async def chat(request: schemas.ChatRequest, user_id: str = Header(None)):
             temperature=request.temperature or 0.7,
         )
 
-        # Extract result data
-        content = result.get("content") if isinstance(result, dict) else str(result)
-        model_used = result.get("model", model) if isinstance(result, dict) else model
-        prompt_tokens = result.get("prompt_tokens", 0) if isinstance(result, dict) else 0
-        completion_tokens = result.get("completion_tokens", 0) if isinstance(result, dict) else 0
-        total_tokens = result.get("total_tokens", prompt_tokens + completion_tokens) if isinstance(result, dict) else (prompt_tokens + completion_tokens)
-
-        # Deduct credits based on model multiplier
-        credits_deducted = deduct_credits(subscription, total_tokens, model_used)
+        content = result.get("content", str(result))
+        model_used = result.get("model", model)
+        prompt_tokens = result.get("prompt_tokens", 0)
+        completion_tokens = result.get("completion_tokens", 0)
+        total_tokens = result.get("total_tokens", prompt_tokens + completion_tokens)
         
-        # Track API cost (provider calculates cost based on tokens)
-        cost = provider.estimate_cost(prompt_tokens, completion_tokens, model_used)
-        track_api_cost(user_id, provider.provider_name, model_used, prompt_tokens, completion_tokens, cost)
+        # ---------------------------------------------------------
+        # 3. DEDUCTION & SAVING
+        # ---------------------------------------------------------
         
-        # Track real API usage
-        track_real_api_usage(user_id, provider.provider_name, model_used, prompt_tokens, completion_tokens, cost)
-        
-        # Save conversation/message
         conv_id = request.conversation_id or str(uuid.uuid4())
-        if conv_id not in conversations_db:
-            conversations_db[conv_id] = {"id": conv_id, "user_id": user_id, "created_at": datetime.now()}
-
         message_id = str(uuid.uuid4())
-        message = {
-            "id": message_id,
-            "conversation_id": conv_id,
-            "role": "assistant",
-            "content": content,
-            "model": model_used,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "api_cost_usd": round(cost, 4),
-            "created_at": datetime.now(),
-        }
-        messages_db[message_id] = message
+        cost = 0.0
+        if hasattr(provider, 'estimate_cost'):
+            cost = provider.estimate_cost(prompt_tokens, completion_tokens, model_used)
 
-        return schemas.ChatResponse(
-            message_id=message_id,
-            conversation_id=conv_id,
-            content=content,
-            model=model_used,
-            tokens_used=total_tokens,
-            tokens_remaining=subscription.get("tokens_remaining"),
-            # New credit fields for client-side visibility
-            **{"credits_used": subscription.get("credits_used"), "credits_remaining": subscription.get("credits_remaining")}
-        )
+        if settings.use_database:
+            # DB Write
+            multiplier = models.MODEL_CREDIT_COSTS.get(model_used, 0.01)
+            credits_deducted = int(total_tokens * multiplier)
+            
+            # Atomic deduction
+            updated_sub = await user_service.deduct_credits_atomic(db, user_id, credits_deducted)
+            
+            # Save Data
+            await chat_service.ensure_conversation(db, conv_id, user_id)
+            await chat_service.save_message(
+                db, conv_id, "assistant", content, model_used,
+                {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens},
+                cost
+            )
+            await chat_service.track_usage(db, user_id, provider.provider_name, model_used, prompt_tokens, completion_tokens, cost)
+            
+            return schemas.ChatResponse(
+                message_id=message_id,
+                conversation_id=conv_id,
+                content=content,
+                model=model_used,
+                tokens_used=total_tokens,
+                tokens_remaining=0, # Deprecated
+                credits_used=updated_sub.credits_used,
+                credits_remaining=updated_sub.credits_remaining
+            )
+        else:
+            # Legacy Write
+            credits_deducted = deduct_credits(subscription, total_tokens, model_used)
+            track_api_cost(user_id, provider.provider_name, model_used, prompt_tokens, completion_tokens, cost)
+            track_real_api_usage(user_id, provider.provider_name, model_used, prompt_tokens, completion_tokens, cost)
+            
+            if conv_id not in conversations_db:
+                conversations_db[conv_id] = {"id": conv_id, "user_id": user_id, "created_at": datetime.now()}
+            
+            messages_db[message_id] = {
+                "id": message_id, "conversation_id": conv_id, "role": "assistant",
+                "content": content, "model": model_used, "tokens": total_tokens, "created_at": datetime.now()
+            }
+
+            return schemas.ChatResponse(
+                message_id=message_id,
+                conversation_id=conv_id,
+                content=content,
+                model=model_used,
+                tokens_used=total_tokens,
+                tokens_remaining=subscription.get("tokens_remaining"),
+                credits_used=subscription.get("credits_used"),
+                credits_remaining=subscription.get("credits_remaining")
+            )
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/chat/models/formatted")
-async def list_models_formatted():
-    """
-    Returns models in a flat format that the frontend expects.
-    """
-    from .. import models as app_models
-    
-    # Get raw models from factory
-    raw_models = llm_factory.get_available_models()
-    
-    # Model tier mapping
-    model_tier_map = {}
-    for tier_name, tier_info in app_models.SUBSCRIPTION_TIERS.items():
-        for model in tier_info["allowed_models"]:
-            if model not in model_tier_map:
-                model_tier_map[model] = tier_name
-    
-    # Flatten the nested provider structure
-    formatted_models = []
-    
-    for provider, model_list in raw_models.items():
-        for model_id in model_list:
-            tier = model_tier_map.get(model_id, "pro")
-            label = model_id.replace("-", " ").title()
-            
-            if "gpt" in model_id.lower():
-                label = model_id.upper().replace("-", " ")
-            elif "claude" in model_id.lower():
-                label = "Claude " + model_id.split("-")[1].capitalize()
-            elif "gemini" in model_id.lower():
-                parts = model_id.split("-")
-                if len(parts) >= 2:
-                    label = f"Gemini {parts[1].capitalize()}"
-                    if len(parts) >= 3:
-                        label += f" {parts[2].capitalize()}"
-            
-            formatted_models.append({
-                "value": model_id,
-                "label": label,
-                "provider": provider,
-                "tier": tier
-            })
-    
-    return formatted_models
-
-
-@router.get("/conversations/")
-async def list_conversations():
-    return list(conversations_db.values())
-
-
-@router.get("/conversations/{conversation_id}/messages")
-async def get_conversation_messages(conversation_id: str):
-    msgs = [m for m in messages_db.values() if m["conversation_id"] == conversation_id]
-    return msgs
-
-
-@router.get("/chat/models")
-async def list_models():
-    return llm_factory.get_available_models()
-
 
 @router.post("/stream/chat")
-async def stream_chat(request: Request):
+async def stream_chat(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
     """HTTP SSE streaming endpoint."""
     try:
         data = await request.json()
     except Exception:
         return stream_error("invalid_request", "Expected JSON body")
 
-    # Validate input
-    if not isinstance(data, dict):
-        return stream_error("invalid_request", "Expected JSON object")
-
     prompt = data.get("prompt")
     model = data.get("model", "mock")
     user_id = data.get("user_id")
-    conversation_id = data.get("conversation_id")
+    conversation_id = data.get("conversation_id") or str(uuid.uuid4())
     max_tokens = data.get("max_tokens", 1000)
     temperature = data.get("temperature", 0.7)
 
     if not user_id:
         return stream_error("missing_user", "user_id is required")
 
-    # Validate user and subscription
-    try:
-        user = get_user_or_404(user_id)
-        subscription = get_subscription_or_404_by_user(user_id)
-        check_subscription_active(subscription)
-    except HTTPException as e:
-        return stream_error("invalid_user_or_subscription", str(e.detail))
-
-    # Check model access
-    try:
-        check_model_access(subscription, model)
-    except HTTPException as e:
-        return stream_error("model_not_allowed", str(e.detail))
-
-    # Per-user spacing (Rate Limit Prevention)
-    try:
-        now = time.time()
-        last = user_last_request.get(user_id, 0.0)
-        # Small delay buffer to prevent immediate provider rate limits
-        if now - last < 0.5:
-             pass 
-        user_last_request[user_id] = now
+    # ---------------------------------------------------------
+    # 1. CHECK SUBSCRIPTION & LIMITS
+    # ---------------------------------------------------------
+    subscription = None
+    
+    if settings.use_database:
+        user = await user_service.get_user_by_id(db, user_id)
+        if not user:
+            return stream_error("invalid_user", "User not found")
         
-        # Check system rate limit
-        check_rate_limit(user_id, subscription["rate_limit_per_minute"])
-    except HTTPException as e:
-        return stream_error("rate_limited", str(e.detail))
+        subscription = await user_service.get_subscription(db, user_id)
+        if not subscription or subscription.status != "active":
+            return stream_error("invalid_subscription", "Inactive subscription")
+            
+        if model not in subscription.allowed_models:
+            return stream_error("model_not_allowed", f"Model {model} not allowed")
+    else:
+        try:
+            get_user_or_404(user_id)
+            subscription = get_subscription_or_404_by_user(user_id)
+            check_subscription_active(subscription)
+            check_model_access(subscription, model)
+            check_rate_limit(user_id, subscription["rate_limit_per_minute"])
+        except HTTPException as e:
+            return stream_error("auth_error", str(e.detail))
 
+    # Throttle
+    now = time.time()
+    last = user_last_request.get(user_id, 0.0)
+    if now - last < 0.5: pass
+    user_last_request[user_id] = now
+
+    # ---------------------------------------------------------
+    # 2. PREPARE PROVIDER
+    # ---------------------------------------------------------
     provider = llm_factory.create_provider(model)
-
-    # Estimate tokens conservatively
     try:
         estimated = provider.count_tokens(prompt)
     except Exception:
         estimated = len(prompt.split())
 
-    # Check credits instead of raw tokens
-    try:
-        check_credits_available(subscription, estimated + max_tokens, model)
-    except Exception:
-        return stream_error("insufficient_credits", f"Need ~{int((estimated + max_tokens))} credits (est), but only {subscription.get('credits_remaining')} remaining")
+    # Check credits conservatively
+    needed = int((estimated + max_tokens) * models.MODEL_CREDIT_COSTS.get(model, 0.01))
+    
+    if settings.use_database:
+        if subscription.credits_remaining < needed:
+            return stream_error("insufficient_credits", f"Need ~{needed} credits")
+    else:
+        try:
+            check_credits_available(subscription, estimated + max_tokens, model)
+        except Exception as e:
+            return stream_error("insufficient_credits", str(e))
 
+    # ---------------------------------------------------------
+    # 3. STREAM & SAVE
+    # ---------------------------------------------------------
     async def event_stream():
         full_response = ""
         any_chunk_sent = False
@@ -265,103 +265,130 @@ async def stream_chat(request: Request):
         try:
             async for chunk in provider.stream_generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature):
                 chunk_text = chunk if isinstance(chunk, str) else str(chunk)
-                # Skip empty/whitespace-only chunks to avoid noisy empty SSE events
-                if not chunk_text or chunk_text.strip() == "":
-                    continue
+                if not chunk_text or not chunk_text.strip(): continue
 
-                # SSE event: data: <json>\n\n
                 payload = json.dumps({"type": "chunk", "content": chunk_text})
                 yield f"data: {payload}\n\n"
                 full_response += chunk_text
                 any_chunk_sent = True
 
         except Exception as e:
-            # If this looks like a quota or rate-limit error, surface a clearer message and stop
-            try:
-                msg = str(e)
-                lower = msg.lower()
-            except Exception:
-                lower = ""
-
-            if "quota" in lower or "limit" in lower or "rate" in lower or "exhausted" in lower:
-                try:
-                    payload = json.dumps({"type": "error", "error": "llm_error", "message": msg})
-                    yield f"data: {payload}\n\n"
-                except Exception:
-                    pass
+            # Error handling logic
+            msg = str(e).lower()
+            if "quota" in msg or "limit" in msg:
+                payload = json.dumps({"type": "error", "error": "provider_error", "message": str(e)})
+                yield f"data: {payload}\n\n"
                 return
 
-            # For other errors, attempt a non-streaming fallback
+            # Fallback to non-streaming
             try:
                 if not any_chunk_sent:
                     result = await provider.generate(prompt=prompt, model=model, max_tokens=max_tokens, temperature=temperature)
-                    content = result.get('content') if isinstance(result, dict) else str(result)
-                    # If we have content, emulate streaming it
+                    content = result.get('content', '')
                     if content:
                         async for part in emulate_stream_text(content):
-                            if not part or part.strip() == "":
-                                continue
                             payload = json.dumps({"type": "chunk", "content": part})
                             yield f"data: {payload}\n\n"
                             full_response += part
                             any_chunk_sent = True
+                        full_response = content
             except Exception as e2:
-                # if fallback also fails, send an error and stop
-                try:
-                    payload = json.dumps({"type": "error", "error": "llm_error", "message": str(e2)})
-                    yield f"data: {payload}\n\n"
-                except Exception:
-                    pass
-                return
+                 payload = json.dumps({"type": "error", "error": "llm_error", "message": str(e2)})
+                 yield f"data: {payload}\n\n"
+                 return
 
-        # After streaming completes, compute tokens and update subscription
+        # FINALIZE
         try:
-            prompt_tokens = provider.count_tokens(prompt)
-            completion_tokens = provider.count_tokens(full_response)
+            prompt_tokens = estimated
+            completion_tokens = len(full_response.split())
             total_tokens = prompt_tokens + completion_tokens
+            cost = 0.0
+            if hasattr(provider, 'estimate_cost'):
+                cost = provider.estimate_cost(prompt_tokens, completion_tokens, model)
 
-            # Deduct credits (based on model multiplier)
-            deduct_credits(subscription, total_tokens, model)
-
-            cost = provider.estimate_cost(prompt_tokens, completion_tokens, model) if hasattr(provider, 'estimate_cost') else 0.0
-            track_api_cost(user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
-            track_real_api_usage(user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
-
-            conv_id = conversation_id or str(uuid.uuid4())
-            if conv_id not in conversations_db:
-                conversations_db[conv_id] = {"id": conv_id, "user_id": user_id, "created_at": datetime.now()}
-
-            message_id = str(uuid.uuid4())
-            message = {
-                "id": message_id,
-                "conversation_id": conv_id,
-                "role": "assistant",
-                "content": full_response,
-                "model": model,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "api_cost_usd": round(cost, 6),
-                "created_at": datetime.now(),
-            }
-            messages_db[message_id] = message
+            if settings.use_database:
+                # DB Update
+                multiplier = models.MODEL_CREDIT_COSTS.get(model, 0.01)
+                credits_to_deduct = int(total_tokens * multiplier)
+                
+                updated_sub = await user_service.deduct_credits_atomic(db, user_id, credits_to_deduct)
+                
+                await chat_service.ensure_conversation(db, conversation_id, user_id)
+                await chat_service.save_message(
+                    db, conversation_id, "assistant", full_response, model,
+                    {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "total_tokens": total_tokens},
+                    cost
+                )
+                await chat_service.track_usage(db, user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
+                
+                final_creds_rem = updated_sub.credits_remaining
+                final_creds_used = updated_sub.credits_used
+            else:
+                # Legacy Update
+                deduct_credits(subscription, total_tokens, model)
+                track_api_cost(user_id, provider.provider_name, model, prompt_tokens, completion_tokens, cost)
+                final_creds_rem = subscription.get("credits_remaining")
+                final_creds_used = subscription.get("credits_used")
 
             payload = json.dumps({
                 "type": "done", 
-                "message_id": message_id, 
+                "message_id": str(uuid.uuid4()), 
                 "tokens_used": total_tokens, 
-                "tokens_remaining": subscription.get("tokens_remaining"), 
-                "model": model, 
-                "credits_used": subscription.get("credits_used"), 
-                "credits_remaining": subscription.get("credits_remaining")
+                "credits_used": final_creds_used,
+                "credits_remaining": final_creds_rem,
+                "model": model
             })
             yield f"data: {payload}\n\n"
-
+            
         except Exception as e:
-            try:
-                payload = json.dumps({"type": "error", "error": "server_error", "message": str(e)})
-                yield f"data: {payload}\n\n"
-            except Exception:
-                pass
+            print(f"Error finalizing stream: {e}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/chat/models/formatted")
+async def list_models_formatted():
+    """Returns models formatted for the frontend."""
+    from .. import models as app_models
+    raw_models = llm_factory.get_available_models()
+    model_tier_map = {}
+    for tier_name, tier_info in app_models.SUBSCRIPTION_TIERS.items():
+        for model in tier_info["allowed_models"]:
+            if model not in model_tier_map:
+                model_tier_map[model] = tier_name
+    
+    formatted_models = []
+    for provider, model_list in raw_models.items():
+        for model_id in model_list:
+            tier = model_tier_map.get(model_id, "pro")
+            label = model_id.replace("-", " ").title()
+            if "gpt" in model_id.lower(): label = model_id.upper().replace("-", " ")
+            elif "claude" in model_id.lower(): label = "Claude " + model_id.split("-")[1].capitalize()
+            elif "gemini" in model_id.lower(): 
+                parts = model_id.split("-")
+                label = f"Gemini {parts[1].capitalize()}" if len(parts) >= 2 else model_id
+            
+            formatted_models.append({"value": model_id, "label": label, "provider": provider, "tier": tier})
+    return formatted_models
+
+
+@router.get("/conversations/")
+async def list_conversations(user_id: str = Header(None), db: AsyncSession = Depends(get_db)):
+    if settings.use_database:
+        if not user_id: return []
+        return await chat_service.get_user_conversations(db, user_id)
+    else:
+        return list(conversations_db.values())
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(conversation_id: str, db: AsyncSession = Depends(get_db)):
+    if settings.use_database:
+        return await chat_service.get_conversation_messages(db, conversation_id)
+    else:
+        return [m for m in messages_db.values() if m["conversation_id"] == conversation_id]
+
+
+@router.get("/chat/models")
+async def list_models():
+    return llm_factory.get_available_models()
