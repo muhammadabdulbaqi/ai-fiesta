@@ -1,9 +1,10 @@
-"""Application entrypoint."""
+"""Application entrypoint - FIXED VERSION with better error handling."""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import os
 from fastapi.responses import FileResponse
+import traceback
 
 from app.config import settings
 from app.database import init_db
@@ -33,41 +34,85 @@ async def lifespan(app: FastAPI):
         from app.database import async_session_maker
         
         async with async_session_maker() as db:
-            existing = await user_service.get_user_by_id(db, demo_user_id)
-            if not existing:
-                # Create with specific ID
-                from app.db_models import User, Subscription
-                
-                user = User(
-                    id=demo_user_id,
-                    email=settings.demo_user_email,
-                    username=settings.demo_user_username,
-                    hashed_password=f"hashed_{settings.demo_user_password}",
-                    is_active=True,
-                )
-                db.add(user)
-                await db.flush()
-                
-                tier = models.SUBSCRIPTION_TIERS["free"]
-                subscription = Subscription(
-                    user_id=user.id,
-                    tier_id=tier["tier_id"],
-                    tier_name=tier["name"],
-                    plan_type="free",
-                    allowed_models=tier["allowed_models"],
-                    tokens_limit=tier["tokens_per_month"],
-                    tokens_used=0,
-                    tokens_remaining=tier["tokens_per_month"],
-                    credits_limit=tier.get("credits_per_month", tier["tokens_per_month"]),
-                    credits_used=0,
-                    credits_remaining=tier.get("credits_per_month", tier["tokens_per_month"]),
-                    monthly_cost_usd=tier["cost_usd"],
-                    rate_limit_per_minute=tier["rate_limit_per_minute"],
-                )
-                db.add(subscription)
-                await db.commit()
-                
-                print(f"✅ Demo user created in database: {user.email}")
+            try:
+                existing = await user_service.get_user_by_id(db, demo_user_id)
+                if not existing:
+                    # Create with specific ID
+                    from app.db_models import User, Subscription
+                    
+                    user = User(
+                        id=demo_user_id,
+                        email=settings.demo_user_email,
+                        username=settings.demo_user_username,
+                        hashed_password=f"hashed_{settings.demo_user_password}",
+                        is_active=True,
+                    )
+                    db.add(user)
+                    await db.flush()
+                    
+                    tier = models.SUBSCRIPTION_TIERS["free"]
+                    subscription = Subscription(
+                        user_id=user.id,
+                        tier_id=tier["tier_id"],
+                        tier_name=tier["name"],
+                        plan_type="free",
+                        allowed_models=tier["allowed_models"],
+                        tokens_limit=tier["tokens_per_month"],
+                        tokens_used=0,
+                        tokens_remaining=tier["tokens_per_month"],
+                        credits_limit=tier.get("credits_per_month", tier["tokens_per_month"]),
+                        credits_used=0,
+                        credits_remaining=tier.get("credits_per_month", tier["tokens_per_month"]),
+                        monthly_cost_usd=tier["cost_usd"],
+                        rate_limit_per_minute=tier["rate_limit_per_minute"],
+                    )
+                    db.add(subscription)
+                    
+                    # CRITICAL: Commit before checking
+                    await db.commit()
+                    
+                    # Refresh to load the data
+                    await db.refresh(user)
+                    await db.refresh(subscription)
+                    
+                    print(f"✅ Demo user created in database: {user.email}")
+                    print(f"✅ Subscription created: {subscription.tier_name} tier")
+                else:
+                    print(f"✅ Demo user already exists: {existing.email}")
+                    # Verify subscription exists
+                    sub = await user_service.get_subscription(db, demo_user_id)
+                    if sub:
+                        print(f"✅ Subscription found: {sub.tier_name} tier")
+                    else:
+                        print("⚠️ WARNING: User exists but has no subscription!")
+                        # Create subscription for existing user
+                        tier = models.SUBSCRIPTION_TIERS["free"]
+                        subscription = Subscription(
+                            user_id=existing.id,
+                            tier_id=tier["tier_id"],
+                            tier_name=tier["name"],
+                            plan_type="free",
+                            allowed_models=tier["allowed_models"],
+                            tokens_limit=tier["tokens_per_month"],
+                            tokens_used=0,
+                            tokens_remaining=tier["tokens_per_month"],
+                            credits_limit=tier.get("credits_per_month", tier["tokens_per_month"]),
+                            credits_used=0,
+                            credits_remaining=tier.get("credits_per_month", tier["tokens_per_month"]),
+                            monthly_cost_usd=tier["cost_usd"],
+                            rate_limit_per_minute=tier["rate_limit_per_minute"],
+                        )
+                        db.add(subscription)
+                        await db.commit()
+                        print(f"✅ Created missing subscription for existing user")
+                        
+            except Exception as e:
+                print(f"❌ Error during demo user creation:")
+                print(f"   {type(e).__name__}: {e}")
+                traceback.print_exc()
+                await db.rollback()
+                # Don't raise - let the app start anyway
+                print("⚠️ Continuing anyway - you may need to create users manually")
     else:
         # In-memory mode (existing logic)
         demo_user = {

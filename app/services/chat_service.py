@@ -76,21 +76,33 @@ async def track_usage(
     usage = result.scalar_one_or_none()
 
     if not usage:
-        usage = APIUsage(user_id=user_id, provider=provider, models_used=[])
+        # Create new usage record with explicit defaults
+        usage = APIUsage(
+            user_id=user_id, 
+            provider=provider,
+            calls=1,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            cost_usd=cost,
+            models_used=[model],
+            last_used=datetime.now()
+        )
         db.add(usage)
-    
-    usage.calls += 1
-    usage.prompt_tokens += prompt_tokens
-    usage.completion_tokens += completion_tokens
-    usage.total_tokens += (prompt_tokens + completion_tokens)
-    usage.cost_usd += cost
-    usage.last_used = datetime.now()
-    
-    # Update models_used list safely
-    current_models = list(usage.models_used) if usage.models_used else []
-    if model not in current_models:
-        current_models.append(model)
-        usage.models_used = current_models
+    else:
+        # Update existing record - handle None values explicitly
+        usage.calls = (usage.calls or 0) + 1
+        usage.prompt_tokens = (usage.prompt_tokens or 0) + prompt_tokens
+        usage.completion_tokens = (usage.completion_tokens or 0) + completion_tokens
+        usage.total_tokens = (usage.total_tokens or 0) + (prompt_tokens + completion_tokens)
+        usage.cost_usd = (usage.cost_usd or 0.0) + cost
+        usage.last_used = datetime.now()
+        
+        # Update models_used list safely
+        current_models = list(usage.models_used) if usage.models_used else []
+        if model not in current_models:
+            current_models.append(model)
+            usage.models_used = current_models
 
     await db.commit()
 

@@ -131,14 +131,15 @@ class APIUsage(Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     provider = Column(String, nullable=False, index=True)
     
-    calls = Column(Integer, default=0)
-    prompt_tokens = Column(Integer, default=0)
-    completion_tokens = Column(Integer, default=0)
-    total_tokens = Column(Integer, default=0)
-    cost_usd = Column(Float, default=0.0)
+    # FIX: Add default=0 and nullable=False to prevent None values
+    calls = Column(Integer, default=0, nullable=False)
+    prompt_tokens = Column(Integer, default=0, nullable=False)
+    completion_tokens = Column(Integer, default=0, nullable=False)
+    total_tokens = Column(Integer, default=0, nullable=False)
+    cost_usd = Column(Float, default=0.0, nullable=False)
     
     # Store models_used as JSON array
-    models_used = Column(JSON, default=list)
+    models_used = Column(JSON, default=list, nullable=False)
     
     last_used = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
