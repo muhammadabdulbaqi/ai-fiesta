@@ -1,62 +1,105 @@
-"""In-memory data structures and helper functions.
-This will be replaced by real database models later.
-"""
+"""In-memory data structures and helper functions."""
 import uuid
 from datetime import datetime
 from typing import Dict
 
-# In-memory stores
+# In-memory stores (legacy)
 users_db: Dict[str, dict] = {}
 subscriptions_db: Dict[str, dict] = {}
-cost_tracker_db: Dict[str, dict] = {}  # track API costs per user
-api_usage_db: Dict[str, dict] = {}  # track real API usage per user per provider
+cost_tracker_db: Dict[str, dict] = {} 
+api_usage_db: Dict[str, dict] = {} 
 
-# Subscription tier definitions
+# --- MODEL METADATA & PRICING ---
+# This serves as the source of truth for the Frontend "Pricing" page
+MODEL_META = {
+    "gemini-2.5-flash": {
+        "label": "Gemini 2.5 Flash",
+        "provider": "gemini",
+        "description": "Fast, multimodal, and efficient.",
+        "input_cost_1k": 0.0001,  # Example pricing
+        "output_cost_1k": 0.0004,
+        "credit_multiplier": 0.005 # Internal credit logic
+    },
+    "gemini-2.5-pro": {
+        "label": "Gemini 2.5 Pro",
+        "provider": "gemini",
+        "description": "Reasoning and complex tasks.",
+        "input_cost_1k": 0.00125,
+        "output_cost_1k": 0.00375,
+        "credit_multiplier": 0.04
+    },
+    "gpt-3.5-turbo": {
+        "label": "GPT-3.5 Turbo",
+        "provider": "openai",
+        "description": "Fast and reliable everyday model.",
+        "input_cost_1k": 0.0005,
+        "output_cost_1k": 0.0015,
+        "credit_multiplier": 0.01
+    },
+    "gpt-4o": {
+        "label": "GPT-4o",
+        "provider": "openai",
+        "description": "Flagship high-intelligence model.",
+        "input_cost_1k": 0.005,
+        "output_cost_1k": 0.015,
+        "credit_multiplier": 0.1
+    },
+    "claude-3-haiku-20240307": {
+        "label": "Claude 3 Haiku",
+        "provider": "anthropic",
+        "description": "Fastest Claude model.",
+        "input_cost_1k": 0.00025,
+        "output_cost_1k": 0.00125,
+        "credit_multiplier": 0.02
+    },
+    "claude-3-5-sonnet-20240620": {
+        "label": "Claude 3.5 Sonnet",
+        "provider": "anthropic",
+        "description": "High intelligence, balanced speed.",
+        "input_cost_1k": 0.003,
+        "output_cost_1k": 0.015,
+        "credit_multiplier": 0.1
+    }
+}
+
+# Generate simple lookup for cost estimation logic
+MODEL_CREDIT_COSTS = {k: v["credit_multiplier"] for k, v in MODEL_META.items()}
+MODEL_CREDIT_COSTS["default"] = 0.01
+
+# --- SUBSCRIPTION TIERS ---
 SUBSCRIPTION_TIERS = {
     "free": {
         "tier_id": "free",
         "name": "Free",
-        # Allow the lower-cost / flash Gemini model on the free tier
-        "allowed_models": ["gemini-2.5-flash", "mock-gpt4"],
-        "tokens_per_month": 1000,
-        "credits_per_month": 1000,
-        "rate_limit_per_minute": 10,
+        "allowed_models": ["gemini-2.5-flash", "gpt-3.5-turbo"],
+        "tokens_per_month": 5000,
+        "credits_per_month": 5000,
+        "rate_limit_per_minute": 5,
         "cost_usd": 0.0,
     },
     "pro": {
         "tier_id": "pro",
         "name": "Pro",
         "allowed_models": [
-            "gpt-3.5-turbo",
-            "claude-3-haiku-20240307",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
+            "gemini-2.5-flash", "gemini-2.5-pro",
+            "gpt-3.5-turbo", "gpt-4o",
+            "claude-3-haiku-20240307", "claude-3-5-sonnet-20240620"
         ],
         "tokens_per_month": 100000,
         "credits_per_month": 50000,
-        "rate_limit_per_minute": 100,
-        "cost_usd": 29.99,
+        "rate_limit_per_minute": 60,
+        "cost_usd": 19.99,
     },
     "enterprise": {
         "tier_id": "enterprise",
         "name": "Enterprise",
-        "allowed_models": [
-            "gpt-4",
-            "gpt-4-turbo",
-            "gpt-5",
-            "gpt-5.1",
-            "claude-3-opus-20240229",
-            "claude-3-sonnet-20240229",
-            "gemini-2.5-pro",
-            "gpt-3.5-turbo",
-        ],
+        "allowed_models": list(MODEL_META.keys()), # All models
         "tokens_per_month": 1000000,
         "credits_per_month": 1000000,
-        "rate_limit_per_minute": 1000,
-        "cost_usd": 299.99,
+        "rate_limit_per_minute": 500,
+        "cost_usd": 199.99,
     },
 }
-
 
 def create_default_subscription(user_id: str, plan: str = "free") -> dict:
     """Create a default subscription for a new user"""
@@ -77,28 +120,10 @@ def create_default_subscription(user_id: str, plan: str = "free") -> dict:
         "credits_used": 0,
         "credits_remaining": tier.get("credits_per_month", tier["tokens_per_month"]),
         "monthly_cost_usd": tier["cost_usd"],
-        "monthly_api_cost_usd": 0.0,  # tracks actual API spend
+        "monthly_api_cost_usd": 0.0,  
         "rate_limit_per_minute": tier["rate_limit_per_minute"],
         "created_at": datetime.now(),
-        "expires_at": None,  # can set for trial periods
+        "expires_at": None,
     }
     subscriptions_db[subscription["id"]] = subscription
     return subscription
-
-
-# Per-model credit cost multipliers. These represent credits charged per LLM token
-# (multiplier). Adjust values according to your pricing strategy.
-MODEL_CREDIT_COSTS = {
-    "gpt-4": 0.06,           # 0.06 credits per token (example)
-    "gpt-4-turbo": 0.05,
-    "gpt-5": 0.1,
-    "gpt-3.5-turbo": 0.01,
-    "gpt-5.1": 0.12,
-    "claude-3-haiku-20240307": 0.02,
-    "claude-3-opus-20240229": 0.03,
-    "gemini-2.5-pro": 0.04,
-    "gemini-2.5-flash": 0.005,
-    # fallback/default multiplier
-    "default": 0.01,
-}
-

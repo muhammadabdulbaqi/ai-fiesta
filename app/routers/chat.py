@@ -17,6 +17,8 @@ from ..utils.stream_emulation import emulate_stream_text
 from app.database import get_db
 from app.services import user_service, chat_service
 
+from .. import models
+
 # Legacy In-Memory Imports
 from ..dependencies import (
     conversations_db,
@@ -348,36 +350,41 @@ async def stream_chat(
 
 @router.get("/chat/models/formatted")
 async def list_models_formatted():
-    """Returns models formatted for the frontend."""
-    from .. import models as app_models
-    raw_models = llm_factory.get_available_models()
-    model_tier_map = {}
-    for tier_name, tier_info in app_models.SUBSCRIPTION_TIERS.items():
-        for model in tier_info["allowed_models"]:
-            if model not in model_tier_map:
-                model_tier_map[model] = tier_name
-    
+    """
+    Returns rich model data for the pricing page and model selector.
+    """
     formatted_models = []
-    for provider, model_list in raw_models.items():
-        for model_id in model_list:
-            tier = model_tier_map.get(model_id, "pro")
-            label = model_id.replace("-", " ").title()
-            if "gpt" in model_id.lower(): label = model_id.upper().replace("-", " ")
-            elif "claude" in model_id.lower(): label = "Claude " + model_id.split("-")[1].capitalize()
-            elif "gemini" in model_id.lower(): 
-                parts = model_id.split("-")
-                label = f"Gemini {parts[1].capitalize()}" if len(parts) >= 2 else model_id
-            
-            formatted_models.append({"value": model_id, "label": label, "provider": provider, "tier": tier})
+    
+    # Iterate over our new central MODEL_META source of truth
+    for model_id, meta in models.MODEL_META.items():
+        # Determine tier
+        tier = "enterprise"
+        for t_name, t_data in models.SUBSCRIPTION_TIERS.items():
+            if model_id in t_data["allowed_models"]:
+                tier = t_name
+                break # Assign lowest tier found
+        
+        formatted_models.append({
+            "value": model_id,
+            "label": meta["label"],
+            "provider": meta["provider"],
+            "tier": tier,
+            "description": meta.get("description", ""),
+            "input_cost": meta.get("input_cost_1k", 0),
+            "output_cost": meta.get("output_cost_1k", 0)
+        })
+        
     return formatted_models
 
 
 @router.get("/conversations/")
 async def list_conversations(user_id: str = Header(None), db: AsyncSession = Depends(get_db)):
+    """Returns conversations with calculated costs"""
     if settings.use_database:
         if not user_id: return []
         return await chat_service.get_user_conversations(db, user_id)
     else:
+        # Fallback for in-memory mode
         return list(conversations_db.values())
 
 

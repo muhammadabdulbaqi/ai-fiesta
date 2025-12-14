@@ -1,14 +1,34 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import Link from "next/link"
-import { Plus, MessageCircle, Users, Gamepad2, Settings } from "lucide-react"
+import { Plus, Users, LayoutGrid, Receipt } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { getConversations, type ConversationSummary } from "@/lib/api"
+import { cn } from "@/lib/utils"
 
 interface SidebarProps {
   onNewChat: () => void
 }
 
+const DEMO_USER_ID = process.env.NEXT_PUBLIC_DEFAULT_USER_ID || "demo-user-1"
+
 export function Sidebar({ onNewChat }: SidebarProps) {
+  const [history, setHistory] = useState<ConversationSummary[]>([])
+
+  useEffect(() => {
+    // Poll for history updates occasionally or trigger via context in real app
+    const fetchHistory = async () => {
+      try {
+        const data = await getConversations(DEMO_USER_ID)
+        setHistory(data)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+    fetchHistory()
+  }, [])
+
   return (
     <div className="w-64 h-screen bg-sidebar border-r border-sidebar-border flex flex-col p-4 overflow-hidden">
       {/* Logo */}
@@ -26,56 +46,59 @@ export function Sidebar({ onNewChat }: SidebarProps) {
       </Button>
 
       {/* Navigation */}
-      <nav className="space-y-2 flex-1">
-        <Link href="/admin" className="block">
-          <Button
-            variant="ghost"
-            className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent"
-          >
-            <Users className="w-4 h-4" />
-            Admin
+      <nav className="space-y-1 mb-6">
+        <Link href="/pricing" className="block">
+          <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent">
+            <Receipt className="w-4 h-4" />
+            Pricing & Models
           </Button>
         </Link>
-
-        <button className="w-full text-left p-3 rounded-lg hover:bg-sidebar-accent transition-colors flex items-center gap-2 text-sidebar-foreground">
-          <MessageCircle className="w-4 h-4" />
-          <span className="text-sm">Avatars</span>
-        </button>
-
-        <button className="w-full text-left p-3 rounded-lg hover:bg-sidebar-accent transition-colors flex items-center gap-2 text-sidebar-foreground">
-          <Gamepad2 className="w-4 h-4" />
-          <span className="text-sm">Projects</span>
-        </button>
-
-        <button className="w-full text-left p-3 rounded-lg hover:bg-sidebar-accent transition-colors flex items-center gap-2 text-sidebar-foreground">
-          <Gamepad2 className="w-4 h-4" />
-          <span className="text-sm">Games</span>
-        </button>
+        <Link href="/admin" className="block">
+          <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent">
+            <Users className="w-4 h-4" />
+            Admin Dashboard
+          </Button>
+        </Link>
       </nav>
 
       {/* History Section */}
-      <div className="border-t border-sidebar-border pt-4 mb-4">
-        <p className="text-xs uppercase tracking-wide text-sidebar-foreground/60 font-semibold mb-3">Yesterday</p>
-        <button className="w-full text-left p-2 rounded hover:bg-sidebar-accent transition-colors text-sm text-sidebar-foreground">
-          what is vercel
-        </button>
-      </div>
-
-      {/* Footer */}
-      <div className="border-t border-sidebar-border pt-4 space-y-3">
-        <div className="bg-sidebar-accent rounded-lg p-3">
-          <p className="font-semibold text-sm mb-2">Free Plan</p>
-          <p className="text-xs text-sidebar-foreground/70 mb-2">2 / 3 messages used</p>
-          <div className="w-full h-2 bg-sidebar-border rounded-full overflow-hidden">
-            <div className="h-full w-2/3 bg-primary" />
-          </div>
+      <div className="flex-1 overflow-y-auto no-scrollbar">
+        <p className="text-xs uppercase tracking-wide text-sidebar-foreground/60 font-semibold mb-3 px-2">
+          History
+        </p>
+        <div className="space-y-1">
+          {history.length === 0 ? (
+            <p className="text-xs text-muted-foreground px-2">No history yet.</p>
+          ) : (
+            history.map((conv) => (
+              <div 
+                key={conv.id}
+                className="group flex flex-col p-2 rounded-lg hover:bg-sidebar-accent transition-colors cursor-pointer"
+              >
+                <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium truncate w-32" title={conv.title || "Untitled"}>
+                        {conv.title || "New Chat"}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                        ${conv.total_cost_usd?.toFixed(4)}
+                    </span>
+                </div>
+                <div className="text-[10px] text-muted-foreground/70">
+                   {new Date(conv.created_at).toLocaleDateString()}
+                </div>
+              </div>
+            ))
+          )}
         </div>
-        <Button variant="ghost" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-sidebar-accent">
-          <Settings className="w-4 h-4" />
-          Settings
-        </Button>
+      </div>
+      
+      {/* Footer */}
+      <div className="border-t border-sidebar-border pt-4 mt-2">
+         {/* Could put user avatar here */}
+         <div className="text-xs text-center text-muted-foreground">
+            v0.1.0-beta
+         </div>
       </div>
     </div>
   )
 }
-

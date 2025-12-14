@@ -74,6 +74,24 @@ export async function getTokenUsage(userId: string): Promise<TokenUsage> {
   }
 }
 
+export interface ConversationSummary {
+  id: string
+  title: string | null
+  created_at: string
+  total_cost_usd: number
+  total_tokens: number
+}
+
+export interface ModelRichInfo {
+  value: string
+  label: string
+  provider: string
+  tier: "free" | "pro" | "enterprise"
+  description: string
+  input_cost: number
+  output_cost: number
+}
+
 export async function getSubscription(userId: string): Promise<Subscription> {
   const res = await fetch(`${API_URL}/subscriptions/${userId}`)
   if (!res.ok) throw new Error("Failed to fetch subscription")
@@ -99,6 +117,20 @@ export async function getSubscription(userId: string): Promise<Subscription> {
 export async function getAdminStats(): Promise<AdminStats> {
   const res = await fetch(`${API_URL}/admin/usage`)
   if (!res.ok) throw new Error("Failed to fetch admin stats")
+  return res.json()
+}
+
+export async function getConversations(userId: string): Promise<ConversationSummary[]> {
+  const res = await fetch(`${API_URL}/conversations/`, {
+    headers: { "user-id": userId }
+  })
+  if (!res.ok) throw new Error("Failed to fetch conversations")
+  return res.json()
+}
+
+export async function getModelsRich(): Promise<ModelRichInfo[]> {
+  const res = await fetch(`${API_URL}/chat/models/formatted`)
+  if (!res.ok) throw new Error("Failed to fetch models")
   return res.json()
 }
 
@@ -175,11 +207,15 @@ export async function useCredits(userId: string, credits: number) {
   return res.json()
 }
 
-export async function getAvailableModels(): Promise<Model[]> {
-  const res = await fetch(`${API_URL}/chat/models/formatted`)
-  if (!res.ok) throw new Error("Failed to fetch models")
-  const data = await res.json()
+// export async function getAvailableModels(): Promise<Model[]> {
+//   const res = await fetch(`${API_URL}/chat/models/formatted`)
+//   if (!res.ok) throw new Error("Failed to fetch models")
+//   const data = await res.json()
   
-  // Data is already in the correct format from the new endpoint
-  return data
+//   // Data is already in the correct format from the new endpoint
+//   return data
+// }
+
+export async function getAvailableModels() {
+  return getModelsRich()
 }

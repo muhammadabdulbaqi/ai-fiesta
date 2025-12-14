@@ -1,17 +1,22 @@
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from app.db_models import Message, CostTracker, APIUsage, Conversation
 
-async def ensure_conversation(db: AsyncSession, conversation_id: str, user_id: str) -> Conversation:
+async def ensure_conversation(db: AsyncSession, conversation_id: str, user_id: str, title: str = None) -> Conversation:
     """Get existing conversation or create a new one."""
     result = await db.execute(select(Conversation).where(Conversation.id == conversation_id))
     conv = result.scalar_one_or_none()
     
     if not conv:
-        conv = Conversation(id=conversation_id, user_id=user_id)
+        # If title is None, we might want to generate one later, for now use timestamp
+        conv = Conversation(
+            id=conversation_id, 
+            user_id=user_id,
+            title=title or f"Chat {datetime.now().strftime('%H:%M')}"
+        )
         db.add(conv)
         await db.commit()
         await db.refresh(conv)
@@ -42,6 +47,14 @@ async def save_message(
     db.add(msg)
     await db.commit()
     await db.refresh(msg)
+    
+    # Update conversation timestamp
+    await db.execute(
+        select(Conversation)
+        .where(Conversation.id == conversation_id)
+        .with_for_update()
+    )
+    # (Trigger would normally handle this, but explicit update for now)
     return msg
 
 async def track_usage(
@@ -54,7 +67,6 @@ async def track_usage(
     cost: float
 ):
     """Log detailed cost and update aggregated usage stats."""
-    # 1. Detailed Log
     tracker = CostTracker(
         user_id=user_id,
         provider=provider,
@@ -66,7 +78,6 @@ async def track_usage(
     )
     db.add(tracker)
 
-    # 2. Aggregated Stats
     result = await db.execute(
         select(APIUsage).where(
             APIUsage.user_id == user_id, 
@@ -76,43 +87,53 @@ async def track_usage(
     usage = result.scalar_one_or_none()
 
     if not usage:
-        # Create new usage record with explicit defaults
-        usage = APIUsage(
-            user_id=user_id, 
-            provider=provider,
-            calls=1,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=prompt_tokens + completion_tokens,
-            cost_usd=cost,
-            models_used=[model],
-            last_used=datetime.now()
-        )
+        usage = APIUsage(user_id=user_id, provider=provider, models_used=[])
         db.add(usage)
-    else:
-        # Update existing record - handle None values explicitly
-        usage.calls = (usage.calls or 0) + 1
-        usage.prompt_tokens = (usage.prompt_tokens or 0) + prompt_tokens
-        usage.completion_tokens = (usage.completion_tokens or 0) + completion_tokens
-        usage.total_tokens = (usage.total_tokens or 0) + (prompt_tokens + completion_tokens)
-        usage.cost_usd = (usage.cost_usd or 0.0) + cost
-        usage.last_used = datetime.now()
-        
-        # Update models_used list safely
-        current_models = list(usage.models_used) if usage.models_used else []
-        if model not in current_models:
-            current_models.append(model)
-            usage.models_used = current_models
+    
+    usage.calls += 1
+    usage.prompt_tokens += prompt_tokens
+    usage.completion_tokens += completion_tokens
+    usage.total_tokens += (prompt_tokens + completion_tokens)
+    usage.cost_usd += cost
+    usage.last_used = datetime.now()
+    
+    current_models = list(usage.models_used) if usage.models_used else []
+    if model not in current_models:
+        current_models.append(model)
+        usage.models_used = current_models
 
     await db.commit()
 
-async def get_user_conversations(db: AsyncSession, user_id: str) -> List[Conversation]:
-    result = await db.execute(
-        select(Conversation)
+async def get_user_conversations(db: AsyncSession, user_id: str) -> List[Dict[str, Any]]:
+    """Get conversations with cost and token summaries."""
+    # Aggregation query
+    stmt = (
+        select(
+            Conversation.id,
+            Conversation.title,
+            Conversation.created_at,
+            func.coalesce(func.sum(Message.api_cost_usd), 0).label("total_cost"),
+            func.coalesce(func.sum(Message.total_tokens), 0).label("total_tokens")
+        )
+        .outerjoin(Message, Message.conversation_id == Conversation.id)
         .where(Conversation.user_id == user_id)
+        .group_by(Conversation.id)
         .order_by(desc(Conversation.created_at))
     )
-    return result.scalars().all()
+    
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    return [
+        {
+            "id": row.id,
+            "title": row.title,
+            "created_at": row.created_at,
+            "total_cost_usd": row.total_cost,
+            "total_tokens": row.total_tokens
+        }
+        for row in rows
+    ]
 
 async def get_conversation_messages(db: AsyncSession, conversation_id: str) -> List[Message]:
     result = await db.execute(
