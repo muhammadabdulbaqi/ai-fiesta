@@ -11,6 +11,7 @@ from app.routers import subscriptions as subscriptions_router
 from app.routers import chat as chat_router
 from app.routers import admin as admin_router
 from app.routers import auth as auth_router
+from app.routers import admin_auth as admin_auth_router
 
 
 @asynccontextmanager
@@ -45,6 +46,7 @@ app.include_router(auth_router.router)
 app.include_router(users_router.router)
 app.include_router(subscriptions_router.router)
 app.include_router(chat_router.router)
+app.include_router(admin_auth_router.router)
 app.include_router(admin_router.router)
 
 

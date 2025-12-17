@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: fiesta-db
+    environment:
+      POSTGRES_USER: fiesta_user
+      POSTGRES_PASSWORD: fiesta_pass
+      POSTGRES_DB: fiesta_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
