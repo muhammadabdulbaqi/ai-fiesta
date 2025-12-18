@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+/frontend/node_modules
 /.pnp
 .pnp.js
 
@@ -27,6 +27,18 @@ yarn-error.log*
 # local env files
 .env*.local
 .env
+.env.local
+.env.production.local
+.env.development.local
+
+# Backend environment files
+/backend/.env
+/backend/.env.local
+
+# Frontend environment files
+/frontend/.env.local
+/frontend/.env.production.local
+/frontend/.env.development.local
 
 # vercel
 .vercel
@@ -41,7 +53,20 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Virtual environments (any location)
 env/
 venv/
 ENV/
 .venv
+**/.venv/
+**/venv/
+**/env/
+backend/.venv/
+backend/venv/
+backend/env/
+frontend/.venv/
+frontend/venv/
+
+# Archive
+/archive/
