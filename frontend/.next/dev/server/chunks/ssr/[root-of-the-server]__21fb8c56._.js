@@ -74,9 +74,12 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2d$them
 ;
 ;
 const metadata = {
-    title: "AI Fiesta",
-    description: "Multi-model AI chat with token and credit tracking",
-    generator: "v0.app"
+    title: "AI Fiesta — Multi-Provider AI Chat Platform",
+    description: "Compare responses from multiple AI models side-by-side. Support for OpenAI, Anthropic, Gemini, Grok, and Perplexity with real-time streaming and usage tracking.",
+    generator: "Next.js",
+    icons: {
+        icon: "/icons/openai.png"
+    }
 };
 function RootLayout({ children }) {
     return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$rsc$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["jsxDEV"])("html", {
@@ -92,23 +95,23 @@ function RootLayout({ children }) {
                     children: children
                 }, void 0, false, {
                     fileName: "[project]/app/layout.tsx",
-                    lineNumber: 25,
+                    lineNumber: 28,
                     columnNumber: 9
                 }, this),
                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$rsc$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f40$vercel$2f$analytics$2f$dist$2f$next$2f$index$2e$mjs__$5b$app$2d$rsc$5d$__$28$ecmascript$29$__["Analytics"], {}, void 0, false, {
                     fileName: "[project]/app/layout.tsx",
-                    lineNumber: 28,
+                    lineNumber: 31,
                     columnNumber: 9
                 }, this)
             ]
         }, void 0, true, {
             fileName: "[project]/app/layout.tsx",
-            lineNumber: 24,
+            lineNumber: 27,
             columnNumber: 7
         }, this)
     }, void 0, false, {
         fileName: "[project]/app/layout.tsx",
-        lineNumber: 23,
+        lineNumber: 26,
         columnNumber: 5
     }, this);
 }
