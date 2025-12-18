@@ -9,9 +9,12 @@ const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "AI Fiesta",
-  description: "Multi-model AI chat with token and credit tracking",
-  generator: "v0.app",
+  title: "AI Fiesta — Multi-Provider AI Chat Platform",
+  description: "Compare responses from multiple AI models side-by-side. Support for OpenAI, Anthropic, Gemini, Grok, and Perplexity with real-time streaming and usage tracking.",
+  generator: "Next.js",
+  icons: {
+    icon: "/icons/openai.png", // Using OpenAI icon as placeholder - can be replaced with custom favicon
+  },
 }
 
 export default function RootLayout({

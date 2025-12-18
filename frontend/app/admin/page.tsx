@@ -12,11 +12,13 @@ import {
   addCredits,
   upgradeSubscription,
   getAdminToken,
+  makeUserAdmin,
+  deleteUser,
   type AdminStats,
   type Subscription,
 } from "@/lib/api"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Users, Zap, CreditCard, TrendingUp } from "lucide-react"
+import { ArrowLeft, Users, Zap, CreditCard, TrendingUp, Trash2, Shield } from "lucide-react"
 
 export default function AdminPage() {
   const router = useRouter()
@@ -69,12 +71,12 @@ export default function AdminPage() {
     if (!selectedUser || !tokensToAdd) return
     setBusy(true)
     try {
-      // Note: Admin endpoints for managing other users' subscriptions would need to be created
-      // For now, this will fail - admin needs separate endpoints
-      await addTokens(Number(tokensToAdd))
+      await addTokens(Number(tokensToAdd), selectedUser)
       await refreshSubs()
       setTokensToAdd("")
-    } catch (err) {
+      alert("Tokens added successfully")
+    } catch (err: any) {
+      alert(err.message || "Failed to add tokens")
       console.error("Failed to add tokens", err)
     } finally {
       setBusy(false)
@@ -85,10 +87,12 @@ export default function AdminPage() {
     if (!selectedUser || !creditsToAdd) return
     setBusy(true)
     try {
-      await addCredits(Number(creditsToAdd))
+      await addCredits(Number(creditsToAdd), selectedUser)
       await refreshSubs()
       setCreditsToAdd("")
-    } catch (err) {
+      alert("Credits added successfully")
+    } catch (err: any) {
+      alert(err.message || "Failed to add credits")
       console.error("Failed to add credits", err)
     } finally {
       setBusy(false)
@@ -99,10 +103,46 @@ export default function AdminPage() {
     if (!selectedUser || !upgradeTier) return
     setBusy(true)
     try {
-      await upgradeSubscription(upgradeTier)
+      await upgradeSubscription(upgradeTier, selectedUser)
       await refreshSubs()
-    } catch (err) {
+      alert("Subscription upgraded successfully")
+    } catch (err: any) {
+      alert(err.message || "Failed to upgrade subscription")
       console.error("Failed to upgrade subscription", err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleMakeAdmin = async () => {
+    if (!selectedUser) return
+    if (!confirm(`Make this user an admin? They will have full access to all features.`)) return
+    setBusy(true)
+    try {
+      await makeUserAdmin(selectedUser)
+      await refreshSubs()
+      alert("User upgraded to admin successfully")
+    } catch (err: any) {
+      alert(err.message || "Failed to make user admin")
+      console.error("Failed to make user admin", err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleDeleteUser = async (userId: string, userEmail: string) => {
+    if (!confirm(`Delete user ${userEmail}? This action cannot be undone.`)) return
+    setBusy(true)
+    try {
+      await deleteUser(userId)
+      await refreshSubs()
+      if (selectedUser === userId) {
+        setSelectedUser("")
+      }
+      alert("User deleted successfully")
+    } catch (err: any) {
+      alert(err.message || "Failed to delete user")
+      console.error("Failed to delete user", err)
     } finally {
       setBusy(false)
     }
@@ -268,9 +308,19 @@ export default function AdminPage() {
                   <option value="free">Free</option>
                   <option value="pro">Pro</option>
                   <option value="enterprise">Enterprise</option>
+                  <option value="admin">Admin</option>
                 </select>
                 <Button variant="outline" disabled={busy} onClick={handleUpgrade}>
                   Upgrade
+                </Button>
+                <Button 
+                  variant="outline" 
+                  disabled={busy || !selectedUser} 
+                  onClick={handleMakeAdmin}
+                  className="gap-2"
+                >
+                  <Shield className="w-4 h-4" />
+                  Make Admin
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -288,6 +338,7 @@ export default function AdminPage() {
                   <TableHead>Tokens Used</TableHead>
                   <TableHead>Credits Used</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -305,10 +356,16 @@ export default function AdminPage() {
                       <div className="capitalize text-sm font-medium">{sub.tier_name}</div>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {sub.tokens_used.toLocaleString()} / {sub.tokens_limit.toLocaleString()}
+                      <div className="flex flex-col">
+                        <span className="font-medium">{sub.tokens_used.toLocaleString()}</span>
+                        <span className="text-xs text-muted-foreground">/ {sub.tokens_limit.toLocaleString()}</span>
+                      </div>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {sub.credits_used.toLocaleString()} / {sub.credits_limit.toLocaleString()}
+                      <div className="flex flex-col">
+                        <span className="font-medium">{sub.credits_used.toLocaleString()}</span>
+                        <span className="text-xs text-muted-foreground">/ {sub.credits_limit.toLocaleString()}</span>
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div
@@ -318,6 +375,19 @@ export default function AdminPage() {
                       >
                         {sub.status}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {sub.tier_id !== "admin" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteUser(sub.user_id, sub.user_email || sub.user_username || sub.user_id)}
+                          disabled={busy}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

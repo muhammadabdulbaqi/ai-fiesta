@@ -24,6 +24,12 @@ class MessageRole(str, enum.Enum):
     system = "system"
 
 
+class FeedbackType(str, enum.Enum):
+    upvote = "upvote"
+    downvote = "downvote"
+    download = "download"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -89,6 +95,7 @@ class Conversation(Base):
     id = Column(String, primary_key=True, default=generate_uuid)
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     title = Column(String, nullable=True)
+    mode = Column(String, nullable=True)  # "multi-chat" or "super-fiesta"
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -154,3 +161,17 @@ class APIUsage(Base):
     
     last_used = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
+
+
+class MessageFeedback(Base):
+    __tablename__ = "message_feedback"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    message_id = Column(String, ForeignKey("messages.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    feedback_type = Column(Enum(FeedbackType), nullable=False)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+
+    # Relationships
+    message = relationship("Message")
+    user = relationship("User")

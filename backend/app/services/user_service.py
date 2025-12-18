@@ -76,10 +76,11 @@ async def get_subscription(db: AsyncSession, user_id: str) -> Optional[Subscript
 async def deduct_credits_atomic(
     db: AsyncSession,
     user_id: str,
-    credits: int
+    credits: int,
+    tokens: int = 0
 ) -> Subscription:
     """
-    Atomically deduct credits using SELECT FOR UPDATE.
+    Atomically deduct credits and tokens using SELECT FOR UPDATE.
     Prevents race conditions from concurrent requests.
     """
     # Lock the row for update
@@ -99,6 +100,11 @@ async def deduct_credits_atomic(
     # Deduct credits
     subscription.credits_used += credits
     subscription.credits_remaining -= credits
+    
+    # Update tokens if provided
+    if tokens > 0:
+        subscription.tokens_used += tokens
+        subscription.tokens_remaining = max(0, subscription.tokens_remaining - tokens)
     
     await db.commit()
     await db.refresh(subscription)

@@ -1,24 +1,26 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Suspense } from "react"
 import { Sidebar } from "@/components/sidebar"
 import { ChatMessage } from "@/components/chat-message"
 import { MultiChatModelSelectors } from "@/components/multi-chat-model-selectors"
 import { SuperFiestaSelector } from "@/components/super-fiesta-selector"
 import { ModeToggle } from "@/components/mode-toggle"
-import { ModelResponseColumn } from "@/components/model-response-column"
+import { ProviderColumn } from "@/components/provider-column"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useChatSSE } from "@/hooks/use-chat-sse"
 import { getTokenUsage, getSubscription, getAuthToken, getAvailableModels, type ModelRichInfo } from "@/lib/api"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Send, AlertCircle, Sparkles, User } from "lucide-react"
 
 type Mode = "multi-chat" | "super-fiesta"
 
-export default function ChatPage() {
+function ChatPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const conversationIdFromUrl = searchParams.get("id")
   const [mode, setMode] = useState<Mode>("multi-chat")
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [selectedModel, setSelectedModel] = useState<string>("")
@@ -27,9 +29,16 @@ export default function ChatPage() {
   const [subscription, setSubscription] = useState<any>(null)
   const [availableModels, setAvailableModels] = useState<ModelRichInfo[]>([])
   const [loading, setLoading] = useState(true)
+  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0)
+  const [isViewingConversation, setIsViewingConversation] = useState(false)
+  const [conversationMode, setConversationMode] = useState<Mode | null>(null)
+  // Provider-based selection for multi-chat mode
+  const [providerModelMap, setProviderModelMap] = useState<Record<string, string>>({}) // provider -> modelId
+  const [enabledProviders, setEnabledProviders] = useState<string[]>([]) // List of enabled providers
 
-  // Auto-scroll ref
+  // Auto-scroll refs
   const bottomRef = useRef<HTMLDivElement>(null)
+  const columnsContainerRef = useRef<HTMLDivElement>(null)
 
   const { messages, sendMessage, isStreaming, error, loadConversation, clearMessages, currentConversationId } = useChatSSE()
 
@@ -52,6 +61,40 @@ export default function ChatPage() {
         setUsage(usageData)
         setSubscription(subData)
         setAvailableModels(modelsData)
+        
+        // Initialize provider-based selection if empty and not viewing a conversation
+        if (!conversationIdFromUrl && enabledProviders.length === 0 && modelsData.length > 0) {
+          // Group by provider and select first model from each
+          const grouped: Record<string, ModelRichInfo[]> = {}
+          modelsData
+            .filter(m => subData?.tier_id === "free" ? m.tier === "free" : true)
+            .forEach(model => {
+              if (!grouped[model.provider]) grouped[model.provider] = []
+              grouped[model.provider].push(model)
+            })
+          
+          const initialProviders = Object.keys(grouped).slice(0, 3) // Enable first 3 providers
+          const initialProviderModelMap: Record<string, string> = {}
+          initialProviders.forEach(provider => {
+            if (grouped[provider].length > 0) {
+              initialProviderModelMap[provider] = grouped[provider][0].value
+            }
+          })
+          
+          setProviderModelMap(initialProviderModelMap)
+          setEnabledProviders(initialProviders)
+          setSelectedModels(initialProviders.map(p => initialProviderModelMap[p]).filter(Boolean))
+        }
+        
+        // If there's a conversation ID in URL, load it
+        if (conversationIdFromUrl) {
+          const loadedMode = await loadConversation(conversationIdFromUrl)
+          if (loadedMode === "multi-chat" || loadedMode === "super-fiesta") {
+            setMode(loadedMode)
+            setConversationMode(loadedMode)
+            setIsViewingConversation(true)
+          }
+        }
       } catch (err: any) {
         console.error("Failed to fetch initial data:", err)
         // If 401 or 403, redirect to login
@@ -68,12 +111,25 @@ export default function ChatPage() {
       }
     }
     fetchInitialData()
-  }, [router])
+  }, [router, conversationIdFromUrl, loadConversation])
 
-  // Auto-scroll effect
+  // Auto-scroll effect for super-fiesta mode
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    if (mode === "super-fiesta" || (mode === "multi-chat" && selectedModels.length === 0)) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [messages, mode, selectedModels.length])
+
+  // Auto-scroll effect for multi-chat mode columns
+  useEffect(() => {
+    if (mode === "multi-chat" && selectedModels.length > 0 && columnsContainerRef.current) {
+      // Scroll each column container to bottom when new messages arrive
+      const columns = columnsContainerRef.current.querySelectorAll('[data-model-column]')
+      columns.forEach((column) => {
+        column.scrollTo({ top: column.scrollHeight, behavior: "smooth" })
+      })
+    }
+  }, [messages, isStreaming, mode, selectedModels.length])
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,16 +150,33 @@ export default function ChatPage() {
             }
           : null,
       )
-    }, currentConversationId) // Pass current conversation_id to maintain conversation continuity
+    }, currentConversationId, mode) // Pass current conversation_id and mode to maintain conversation continuity
+    
+    // Refresh sidebar after message is sent (with a small delay to ensure backend has saved)
+    setTimeout(() => {
+      setSidebarRefreshTrigger(prev => prev + 1)
+    }, 1000)
+  }
+
+
+  const handleConversationSelect = async (conversationId: string) => {
+    const loadedMode = await loadConversation(conversationId)
+    // Set mode if conversation has one and lock it
+    if (loadedMode === "multi-chat" || loadedMode === "super-fiesta") {
+      setMode(loadedMode)
+      setConversationMode(loadedMode)
+      setIsViewingConversation(true)
+      // Navigate to conversation URL
+      router.push(`/?id=${conversationId}`)
+    }
   }
 
   const handleNewChat = () => {
     setInputValue("")
     clearMessages()
-  }
-
-  const handleConversationSelect = async (conversationId: string) => {
-    await loadConversation(conversationId)
+    setIsViewingConversation(false)
+    setConversationMode(null)
+    router.push("/")
   }
 
   if (loading) {
@@ -119,6 +192,7 @@ export default function ChatPage() {
       <Sidebar 
         onNewChat={handleNewChat} 
         onConversationSelect={handleConversationSelect}
+        refreshTrigger={sidebarRefreshTrigger}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden relative">
@@ -146,31 +220,26 @@ export default function ChatPage() {
               )}
             </div>
           </div>
-          {/* Model Selection at Top */}
-          <div className="flex flex-col gap-2">
+          {/* Model Selection at Top - Only show in Super Fiesta mode */}
+          {mode === "super-fiesta" && (
             <div className="flex items-center gap-3 overflow-x-auto pb-2">
-              {mode === "multi-chat" ? (
-                // Multi-Chat: Show multiple model selectors with toggles
-                <MultiChatModelSelectors
-                  selectedModels={selectedModels}
-                  onModelsChange={setSelectedModels}
-                  userTier={subscription?.tier_id}
-                />
-              ) : (
-                // Super Fiesta: Show single model selector
-                <SuperFiestaSelector
-                  value={selectedModel}
-                  onChange={setSelectedModel}
-                  userTier={subscription?.tier_id}
-                />
-              )}
+              <SuperFiestaSelector
+                value={selectedModel}
+                onChange={setSelectedModel}
+                userTier={subscription?.tier_id}
+              />
             </div>
-            
-            {/* Model Response Columns - Directly below model selectors (only in multi-chat mode) */}
-            {mode === "multi-chat" && selectedModels.length > 0 && (
-              <div className="flex flex-col gap-2 flex-1 overflow-hidden bg-background/50 min-h-[400px] max-h-[600px]">
-                {/* Shared User Messages Area - Show once above all columns */}
-                <div className="flex-shrink-0 overflow-y-auto max-h-[150px] px-4 py-2 space-y-2 border-b border-border">
+          )}
+        </div>
+
+        {/* Main Content Area */}
+        {mode === "multi-chat" ? (
+          /* Multi-Chat Mode: Separate full-height containers with horizontal scrolling */
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Shared User Messages Area - Show once at the top */}
+            {messages.filter(m => m.role === "user").length > 0 && (
+              <div className="flex-shrink-0 border-b border-border bg-background/50 px-4 py-3">
+                <div className="space-y-2">
                   {messages.filter(m => m.role === "user").map((msg) => (
                     <div key={msg.id} className="flex justify-end animate-in fade-in slide-in-from-bottom-2 duration-300">
                       <div className="flex gap-2 flex-row-reverse max-w-[85%]">
@@ -184,40 +253,76 @@ export default function ChatPage() {
                     </div>
                   ))}
                 </div>
-                
-                {/* Model Response Columns */}
-                <div className="flex h-full overflow-x-auto">
-                  {selectedModels.map((modelId) => {
-                    // Find model info from availableModels
-                    const modelInfo = availableModels.find((m) => m.value === modelId) || 
-                      { value: modelId, label: modelId, provider: "unknown" }
-                    const providerIcon = modelInfo.provider === "openai" ? "/icons/openai.png" :
-                      modelInfo.provider === "anthropic" ? "/icons/anthropic-1.svg" :
-                      modelInfo.provider === "gemini" ? "/icons/Google_Gemini_icon_2025.svg.png" :
-                      modelInfo.provider === "grok" ? "/icons/Grok-icon.svg.png" :
-                      modelInfo.provider === "perplexity" ? "/icons/perplexity-e6a4e1t06hd6dhczot580o.webp" :
-                      undefined
-                    
-                    return (
-                      <ModelResponseColumn
-                        key={modelId}
-                        modelId={modelId}
-                        modelLabel={modelInfo.label || modelId}
-                        providerIcon={providerIcon}
-                        isEnabled={true}
-                        messages={messages}
-                        isStreaming={isStreaming}
-                      />
-                    )
-                  })}
-                </div>
               </div>
             )}
+            
+            {/* Provider Columns - Full height, horizontal scrolling - Show providers, not individual models */}
+            <div ref={columnsContainerRef} className="flex-1 flex overflow-x-auto overflow-y-hidden">
+              {(() => {
+                // Group models by provider
+                const grouped: Record<string, ModelRichInfo[]> = {}
+                availableModels
+                  .filter(m => subscription?.tier_id !== "free" || m.tier === "free")
+                  .forEach(model => {
+                    if (!grouped[model.provider]) grouped[model.provider] = []
+                    grouped[model.provider].push(model)
+                  })
+                
+                const providers = Object.keys(grouped).sort()
+                
+                return providers.map((provider) => {
+                  const models = grouped[provider]
+                  const selectedModelId = providerModelMap[provider] || models[0]?.value
+                  const isEnabled = enabledProviders.includes(provider)
+                  const providerIcon = provider === "openai" ? "/icons/openai.png" :
+                    provider === "anthropic" ? "/icons/anthropic-1.svg" :
+                    provider === "gemini" ? "/icons/Google_Gemini_icon_2025.svg.png" :
+                    provider === "grok" ? "/icons/Grok-icon.svg.png" :
+                    provider === "perplexity" ? "/icons/perplexity-e6a4e1t06hd6dhczot580o.webp" :
+                    undefined
+                  
+                  return (
+                    <ProviderColumn
+                      key={provider}
+                      provider={provider}
+                      providerIcon={providerIcon}
+                      models={models}
+                      selectedModelId={selectedModelId}
+                      isEnabled={isEnabled}
+                      messages={messages}
+                      isStreaming={isStreaming}
+                      onToggle={(enabled) => {
+                        if (enabled) {
+                          if (!enabledProviders.includes(provider)) {
+                            setEnabledProviders([...enabledProviders, provider])
+                            if (!providerModelMap[provider] && models.length > 0) {
+                              setProviderModelMap({ ...providerModelMap, [provider]: models[0].value })
+                              setSelectedModels([...selectedModels, models[0].value])
+                            }
+                          }
+                        } else {
+                          // Don't allow disabling if it's the last enabled provider
+                          if (enabledProviders.length > 1) {
+                            const modelToRemove = providerModelMap[provider]
+                            setEnabledProviders(enabledProviders.filter(p => p !== provider))
+                            setSelectedModels(selectedModels.filter(m => m !== modelToRemove))
+                          }
+                        }
+                      }}
+                      onModelChange={(modelId) => {
+                        // Update the selected model for this provider
+                        const oldModelId = providerModelMap[provider]
+                        setProviderModelMap({ ...providerModelMap, [provider]: modelId })
+                        // Update selectedModels array
+                        setSelectedModels(selectedModels.map(m => m === oldModelId ? modelId : m))
+                      }}
+                    />
+                  )
+                })
+              })()}
+            </div>
           </div>
-        </div>
-
-        {/* Chat Area - Standard view for Super Fiesta or when no models selected */}
-        {!(mode === "multi-chat" && selectedModels.length > 0) && (
+        ) : (
           /* Standard Chat View for Super Fiesta mode or when no models selected */
           <div className="flex-1 overflow-y-auto no-scrollbar bg-background/50">
             {messages.length === 0 ? (
@@ -250,10 +355,12 @@ export default function ChatPage() {
                     </div>
                 )}
 
-                {/* Mode Toggle Buttons - Above Input */}
-                <div className="flex items-center justify-center gap-3">
-                  <ModeToggle mode={mode} onModeChange={setMode} />
-                </div>
+                {/* Mode Toggle Buttons - Above Input - Disabled when viewing conversation */}
+                {!isViewingConversation && (
+                  <div className="flex items-center justify-center gap-3">
+                    <ModeToggle mode={mode} onModeChange={setMode} />
+                  </div>
+                )}
 
                 {/* Input Container */}
                 <div className="bg-card border border-border rounded-xl shadow-lg p-4">
@@ -287,5 +394,17 @@ export default function ChatPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    }>
+      <ChatPageContent />
+    </Suspense>
   )
 }

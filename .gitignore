@@ -70,3 +70,11 @@ frontend/venv/
 
 # Archive
 /archive/
+
+# Generated documentation files (keep source .md files)
+docs/_build/
+docs/.next/
+docs/dist/
+docs/*.pdf
+docs/**/*.html
+docs/**/site/

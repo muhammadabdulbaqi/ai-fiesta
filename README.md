@@ -345,6 +345,27 @@ All documentation is located in the [`docs/`](./docs/) folder:
 - Multi-Chat and Super Fiesta modes
 - Model selection with provider icons
 
+## Next Steps
+
+### Planned Features
+
+- **Database Standalone Setup**: Migrate from Docker-based PostgreSQL to a standalone PostgreSQL installation using DBngin (https://dbngin.com/). This will provide a more persistent and easier-to-manage database setup. Note: This migration may result in data loss, so it should be planned accordingly.
+
+- **Enhanced UI Features**:
+  - Improved conversation history with real-time updates
+  - Better model response visualization
+  - Enhanced feedback system (upvote/downvote/download tracking)
+
+- **Performance Improvements**:
+  - Optimized token calculation and usage tracking
+  - Better caching strategies
+  - Improved streaming performance
+
+- **Additional Integrations**:
+  - More AI provider integrations
+  - Enhanced admin dashboard features
+  - Advanced analytics and reporting
+
 ## License
 
 MIT

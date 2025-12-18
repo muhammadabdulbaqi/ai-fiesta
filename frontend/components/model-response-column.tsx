@@ -2,8 +2,11 @@
 
 import { useState } from "react"
 import { ExtendedMessage, ModelResponseVariation } from "@/hooks/use-chat-sse"
-import { Sparkles, AlertTriangle, Bot, User } from "lucide-react"
+import { Sparkles, AlertTriangle, Bot, User, ThumbsUp, ThumbsDown, Download } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { submitFeedback } from "@/lib/api"
+import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 
 interface ModelResponseColumnProps {
   modelId: string
@@ -12,6 +15,7 @@ interface ModelResponseColumnProps {
   isEnabled: boolean
   messages: ExtendedMessage[]
   isStreaming: boolean
+  onToggle?: (enabled: boolean) => void
 }
 
 export function ModelResponseColumn({
@@ -21,6 +25,7 @@ export function ModelResponseColumn({
   isEnabled,
   messages,
   isStreaming,
+  onToggle,
 }: ModelResponseColumnProps) {
   // Filter messages to show only assistant responses from this model
   // User messages are shown separately in a shared area, not in each column
@@ -29,35 +34,52 @@ export function ModelResponseColumn({
     return false
   })
 
+  const isCollapsed = !isEnabled
+
   return (
-    <div className={cn(
-      "flex flex-col h-full min-w-[300px] max-w-[400px]",
-      !isEnabled && "opacity-50"
-    )}>
-      {/* Model Header - Fixed at top */}
+    <div 
+      data-model-column
+      className={cn(
+        "flex flex-col h-full border-r border-border bg-background transition-all duration-300",
+        isCollapsed ? "min-w-[60px] max-w-[60px]" : "min-w-[400px] max-w-[500px]"
+      )}
+    >
+      {/* Model Header - Fixed at top with Toggle */}
       <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border p-3">
         <div className="flex items-center gap-2">
           {providerIcon ? (
             <img
               src={providerIcon}
               alt={modelId}
-              className="w-5 h-5 object-contain"
+              className="w-5 h-5 object-contain flex-shrink-0"
             />
           ) : (
-            <Sparkles className="w-5 h-5 text-primary" />
+            <Sparkles className="w-5 h-5 text-primary flex-shrink-0" />
           )}
-          <span className="font-semibold text-sm">{modelLabel}</span>
-          {isStreaming && (
-            <span className="relative flex h-2 w-2 ml-auto">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-            </span>
+          {!isCollapsed && (
+            <>
+              <span className="font-semibold text-sm truncate">{modelLabel}</span>
+              {isStreaming && (
+                <span className="relative flex h-2 w-2 ml-auto">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                </span>
+              )}
+            </>
+          )}
+          {onToggle && (
+            <Switch 
+              checked={isEnabled} 
+              onCheckedChange={onToggle}
+              className="ml-auto"
+            />
           )}
         </div>
       </div>
 
       {/* Messages - Scrollable (only assistant responses, no user messages) */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {!isCollapsed && (
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {relevantMessages.length === 0 ? (
           <div className="text-center text-sm text-muted-foreground py-8">
             No response yet
@@ -89,10 +111,69 @@ export function ModelResponseColumn({
                       </div>
                     )}
                     {!variation.isStreaming && !variation.error && (
-                      <div className="mt-2 pt-2 border-t border-border/50 text-[10px] text-muted-foreground flex justify-between">
-                        <span>Tokens: {variation.tokens_used || 0}</span>
-                        <span>Credits: {variation.credits_used || 0}</span>
-                      </div>
+                      <>
+                        <div className="mt-2 pt-2 border-t border-border/50 text-[10px] text-muted-foreground flex justify-between">
+                          <span>Tokens: {variation.tokens_used || 0}</span>
+                          <span>Credits: {variation.credits_used || 0}</span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={async () => {
+                              try {
+                                await submitFeedback(msg.id, "upvote")
+                              } catch (err) {
+                                console.error("Failed to submit upvote:", err)
+                              }
+                            }}
+                          >
+                            <ThumbsUp className="w-3 h-3 mr-1" />
+                            Upvote
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={async () => {
+                              try {
+                                await submitFeedback(msg.id, "downvote")
+                              } catch (err) {
+                                console.error("Failed to submit downvote:", err)
+                              }
+                            }}
+                          >
+                            <ThumbsDown className="w-3 h-3 mr-1" />
+                            Downvote
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={async () => {
+                              try {
+                                await submitFeedback(msg.id, "download")
+                                // Also trigger actual download
+                                const blob = new Blob([variation.content], { type: "text/plain" })
+                                const url = URL.createObjectURL(blob)
+                                const a = document.createElement("a")
+                                a.href = url
+                                a.download = `response-${modelId}-${msg.id}.txt`
+                                document.body.appendChild(a)
+                                a.click()
+                                document.body.removeChild(a)
+                                URL.revokeObjectURL(url)
+                              } catch (err) {
+                                console.error("Failed to download:", err)
+                              }
+                            }}
+                          >
+                            <Download className="w-3 h-3 mr-1" />
+                            Download
+                          </Button>
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
@@ -100,7 +181,8 @@ export function ModelResponseColumn({
             )
           })
         )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
