@@ -66,6 +66,7 @@ export function useChatSSE() {
     assistantMsgId: string, 
     conversationId: string | null,
     signal: AbortSignal,
+    mode: string | null,
     onUsageUpdate?: (delta: UsageDelta) => void
   ) => {
     try {
@@ -76,6 +77,7 @@ export function useChatSSE() {
           prompt,
           model: modelId,
           conversation_id: conversationId, // Use shared conversation_id for all models
+          mode: mode, // Pass mode to backend
           max_tokens: 1000,
           temperature: 0.7,
         }),
@@ -185,7 +187,7 @@ export function useChatSSE() {
   }
 
   const sendMessage = useCallback(
-    async (prompt: string, models: string[], onUsageUpdate?: (usage: UsageDelta) => void, conversationId?: string | null) => {
+    async (prompt: string, models: string[], onUsageUpdate?: (usage: UsageDelta) => void, conversationId?: string | null, mode?: string | null) => {
       setError(null)
       setUsage(null)
 
@@ -238,6 +240,7 @@ export function useChatSSE() {
             assistantMsgId, 
             sharedConversationId,
             abortControllerRef.current!.signal,
+            mode || null,
             onUsageUpdate
         )
       )
@@ -257,8 +260,14 @@ export function useChatSSE() {
     try {
       setError(null)
       setIsStreaming(false)
-      // Import the API function
-      const { getConversationMessages } = await import("@/lib/api")
+      // Import the API functions
+      const { getConversationMessages, getConversations } = await import("@/lib/api")
+      
+      // Get conversation details (including mode) from the conversations list
+      const conversations = await getConversations()
+      const conversation = conversations.find(c => c.id === conversationId)
+      const conversationMode = conversation?.mode || null
+      
       const conversationMessages = await getConversationMessages(conversationId)
       
       // Transform conversation messages to ExtendedMessage format
@@ -346,9 +355,13 @@ export function useChatSSE() {
       setMessages(transformedMessages)
       // Set the conversation ID so new messages continue in the same conversation
       setCurrentConversationId(conversationId)
+      
+      // Return mode so the page can set it
+      return conversationMode
     } catch (err: any) {
       setError(err.message || "Failed to load conversation")
       console.error("Failed to load conversation:", err)
+      return null
     }
   }, [])
 

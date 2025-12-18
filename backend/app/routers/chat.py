@@ -172,8 +172,8 @@ async def chat(
         multiplier = models.MODEL_CREDIT_COSTS.get(model_used, 0.01)
         credits_deducted = int(total_tokens * multiplier)
         
-        # Atomic deduction
-        updated_sub = await user_service.deduct_credits_atomic(db, user_id, credits_deducted)
+        # Atomic deduction (includes tokens)
+        updated_sub = await user_service.deduct_credits_atomic(db, user_id, credits_deducted, total_tokens)
         
         # Save user message first
         await chat_service.ensure_conversation(db, conv_id, user_id, title=request.prompt[:100] if request.prompt else None)
@@ -224,6 +224,7 @@ async def stream_chat(
     model = data.get("model", "mock")
     user_id = current_user.id
     conversation_id = data.get("conversation_id") or str(uuid.uuid4())
+    mode = data.get("mode")  # "multi-chat" or "super-fiesta"
     max_tokens = data.get("max_tokens", 1000)
     temperature = data.get("temperature", 0.7)
 
@@ -314,10 +315,10 @@ async def stream_chat(
             multiplier = models.MODEL_CREDIT_COSTS.get(model, 0.01)
             credits_to_deduct = int(total_tokens * multiplier)
             
-            updated_sub = await user_service.deduct_credits_atomic(db, user_id, credits_to_deduct)
+            updated_sub = await user_service.deduct_credits_atomic(db, user_id, credits_to_deduct, total_tokens)
             
             # Ensure conversation exists
-            await chat_service.ensure_conversation(db, conversation_id, user_id, title=prompt[:100] if prompt else None)
+            await chat_service.ensure_conversation(db, conversation_id, user_id, title=prompt[:100] if prompt else None, mode=mode)
             
             # Check if user message already exists (to avoid duplicates when multiple models respond)
             from app.db_models import Message, MessageRole
@@ -466,3 +467,62 @@ async def delete_conversation(
 @router.get("/chat/models")
 async def list_models():
     return llm_factory.get_available_models()
+
+
+@router.post("/chat/messages/{message_id}/feedback")
+async def submit_feedback(
+    message_id: str,
+    request: schemas.FeedbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Submit feedback (upvote/downvote/download) for a message"""
+    from app.db_models import Message, MessageFeedback, FeedbackType
+    from sqlalchemy import select
+    
+    # Verify message exists and belongs to user's conversation
+    result = await db.execute(
+        select(Message).where(Message.id == message_id)
+    )
+    message = result.scalar_one_or_none()
+    
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+    
+    # Verify user owns the conversation
+    from app.db_models import Conversation
+    conv_result = await db.execute(
+        select(Conversation).where(
+            Conversation.id == message.conversation_id,
+            Conversation.user_id == current_user.id
+        )
+    )
+    conv = conv_result.scalar_one_or_none()
+    
+    if not conv:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # Validate feedback type
+    try:
+        feedback_type = FeedbackType(request.feedback_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid feedback type: {request.feedback_type}. Must be one of: upvote, downvote, download")
+    
+    # Create feedback record
+    feedback = MessageFeedback(
+        message_id=message_id,
+        user_id=current_user.id,
+        feedback_type=feedback_type
+    )
+    
+    db.add(feedback)
+    await db.commit()
+    await db.refresh(feedback)
+    
+    return schemas.FeedbackResponse(
+        id=feedback.id,
+        message_id=feedback.message_id,
+        user_id=feedback.user_id,
+        feedback_type=feedback.feedback_type.value,
+        created_at=feedback.created_at
+    )

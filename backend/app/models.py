@@ -200,14 +200,8 @@ SUBSCRIPTION_TIERS = {
     "pro": {
         "tier_id": "pro",
         "name": "Pro",
-        "allowed_models": [
-            "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro",
-            "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini", "gpt-4-turbo",
-            "claude-3-haiku-20240307", "claude-3-5-sonnet-20240620", "claude-3-5-haiku-20241022", "claude-3-sonnet-20240229",
-            "grok-beta", "grok-2",
-            "perplexity-sonar"
-        ],
-        "tokens_per_month": 100000,
+        "allowed_models": list(MODEL_META.keys()),  # All models
+        "tokens_per_month": 30000,
         "credits_per_month": 50000,
         "rate_limit_per_minute": 60,
         "cost_usd": 19.99,
@@ -220,5 +214,14 @@ SUBSCRIPTION_TIERS = {
         "credits_per_month": 1000000,
         "rate_limit_per_minute": 500,
         "cost_usd": 199.99,
+    },
+    "admin": {
+        "tier_id": "admin",
+        "name": "Admin",
+        "allowed_models": list(MODEL_META.keys()), # All models
+        "tokens_per_month": 999999999,
+        "credits_per_month": 999999999,
+        "rate_limit_per_minute": 1000,
+        "cost_usd": 0.0,
     },
 }

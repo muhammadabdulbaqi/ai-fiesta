@@ -394,6 +394,8 @@ __turbopack_context__.s([
     ()=>setAdminToken,
     "setAuthToken",
     ()=>setAuthToken,
+    "submitFeedback",
+    ()=>submitFeedback,
     "upgradeSubscription",
     ()=>upgradeSubscription,
     "useCredits",
@@ -751,6 +753,21 @@ async function deleteConversation(conversationId) {
         headers: getAuthHeaders()
     });
     if (!res.ok) throw new Error("Failed to delete conversation");
+}
+async function submitFeedback(messageId, feedbackType) {
+    const res = await fetch(`${API_URL}/chat/messages/${messageId}/feedback`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+            feedback_type: feedbackType
+        })
+    });
+    if (!res.ok) {
+        const error = await res.json().catch(()=>({
+                detail: "Failed to submit feedback"
+            }));
+        throw new Error(error.detail || "Failed to submit feedback");
+    }
 }
 }),
 "[project]/app/pricing/page.tsx [app-ssr] (ecmascript)", ((__turbopack_context__) => {

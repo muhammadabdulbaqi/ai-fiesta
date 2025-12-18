@@ -149,6 +149,8 @@ export interface ConversationSummary {
   created_at: string
   total_cost_usd: number
   total_tokens: number
+  models_used?: string[]
+  mode?: "multi-chat" | "super-fiesta"
 }
 
 export interface ModelRichInfo {
@@ -271,33 +273,77 @@ export async function getAllSubscriptions(): Promise<Subscription[]> {
   return []
 }
 
-export async function addTokens(tokens: number) {
-  const res = await fetch(`${API_URL}/subscriptions/me/add-tokens`, {
+export async function addTokens(tokens: number, userId?: string) {
+  const url = userId 
+    ? `${API_URL}/admin/users/${userId}/add-tokens`
+    : `${API_URL}/subscriptions/me/add-tokens`
+  const headers = userId ? getAdminAuthHeaders() : getAuthHeaders()
+  const res = await fetch(url, {
     method: "POST",
-    headers: getAuthHeaders(),
+    headers,
     body: JSON.stringify(tokens),
   })
   if (!res.ok) throw new Error("Failed to add tokens")
   return res.json()
 }
 
-export async function addCredits(credits: number) {
-  const res = await fetch(`${API_URL}/subscriptions/me/add-credits`, {
+export async function addCredits(credits: number, userId?: string) {
+  const url = userId 
+    ? `${API_URL}/admin/users/${userId}/add-credits`
+    : `${API_URL}/subscriptions/me/add-credits`
+  const headers = userId ? getAdminAuthHeaders() : getAuthHeaders()
+  const res = await fetch(url, {
     method: "POST",
-    headers: getAuthHeaders(),
+    headers,
     body: JSON.stringify(credits),
   })
   if (!res.ok) throw new Error("Failed to add credits")
   return res.json()
 }
 
-export async function upgradeSubscription(tier: string) {
-  const res = await fetch(`${API_URL}/subscriptions/me/upgrade?tier=${encodeURIComponent(tier)}`, {
+export async function upgradeSubscription(tier: string, userId?: string) {
+  if (userId) {
+    // Admin endpoint - uses query param
+    const res = await fetch(`${API_URL}/admin/users/${userId}/upgrade?tier=${encodeURIComponent(tier)}`, {
+      method: "POST",
+      headers: getAdminAuthHeaders(),
+    })
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: "Failed to upgrade subscription" }))
+      throw new Error(error.detail || "Failed to upgrade subscription")
+    }
+    return res.json()
+  } else {
+    // Regular user endpoint
+    const res = await fetch(`${API_URL}/subscriptions/me/upgrade?tier=${encodeURIComponent(tier)}`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+    })
+    if (!res.ok) throw new Error("Failed to upgrade subscription")
+    return res.json()
+  }
+}
+
+export async function makeUserAdmin(userId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/admin/users/${userId}/make-admin`, {
     method: "POST",
-    headers: getAuthHeaders(),
+    headers: getAdminAuthHeaders(),
   })
-  if (!res.ok) throw new Error("Failed to upgrade subscription")
-  return res.json()
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to make user admin" }))
+    throw new Error(error.detail || "Failed to make user admin")
+  }
+}
+
+export async function deleteUser(userId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/admin/users/${userId}`, {
+    method: "DELETE",
+    headers: getAdminAuthHeaders(),
+  })
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to delete user" }))
+    throw new Error(error.detail || "Failed to delete user")
+  }
 }
 
 export async function useTokens(tokens: number) {
@@ -469,4 +515,16 @@ export async function deleteConversation(conversationId: string): Promise<void> 
     headers: getAuthHeaders(),
   })
   if (!res.ok) throw new Error("Failed to delete conversation")
+}
+
+export async function submitFeedback(messageId: string, feedbackType: "upvote" | "downvote" | "download"): Promise<void> {
+  const res = await fetch(`${API_URL}/chat/messages/${messageId}/feedback`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ feedback_type: feedbackType }),
+  })
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "Failed to submit feedback" }))
+    throw new Error(error.detail || "Failed to submit feedback")
+  }
 }

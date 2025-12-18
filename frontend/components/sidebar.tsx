@@ -12,38 +12,40 @@ import { cn } from "@/lib/utils"
 interface SidebarProps {
   onNewChat: () => void
   onConversationSelect?: (conversationId: string) => void
+  refreshTrigger?: number // When this changes, refresh the conversation list
 }
 
-export function Sidebar({ onNewChat, onConversationSelect }: SidebarProps) {
+export function Sidebar({ onNewChat, onConversationSelect, refreshTrigger }: SidebarProps) {
   const router = useRouter()
   const { theme, setTheme } = useTheme()
   const [history, setHistory] = useState<ConversationSummary[]>([])
   const [user, setUser] = useState<User | null>(null)
   const [selectedConv, setSelectedConv] = useState<string | null>(null)
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [conversations, currentUser] = await Promise.all([
-          getConversations(), // Uses JWT from headers
-          getCurrentUser().catch(() => null)
-        ])
-        setHistory(conversations)
-        setUser(currentUser)
-      } catch (err: any) {
-        console.error("Sidebar fetch error:", err)
-        // Only redirect on authentication errors, not on network errors
-        const errorMessage = err?.message || ""
-        if (errorMessage.includes("401") || errorMessage.includes("403") || errorMessage.includes("Unauthorized")) {
-          // Don't redirect if we're already on login page
-          if (window.location.pathname !== "/login") {
-            router.push("/login")
-          }
+  const fetchData = async () => {
+    try {
+      const [conversations, currentUser] = await Promise.all([
+        getConversations(), // Uses JWT from headers
+        getCurrentUser().catch(() => null)
+      ])
+      setHistory(conversations)
+      setUser(currentUser)
+    } catch (err: any) {
+      console.error("Sidebar fetch error:", err)
+      // Only redirect on authentication errors, not on network errors
+      const errorMessage = err?.message || ""
+      if (errorMessage.includes("401") || errorMessage.includes("403") || errorMessage.includes("Unauthorized")) {
+        // Don't redirect if we're already on login page
+        if (window.location.pathname !== "/login") {
+          router.push("/login")
         }
       }
     }
+  }
+
+  useEffect(() => {
     fetchData()
-  }, [router])
+  }, [router, refreshTrigger])
 
   const handleDelete = async (e: React.MouseEvent, conversationId: string) => {
     e.stopPropagation()
@@ -57,9 +59,33 @@ export function Sidebar({ onNewChat, onConversationSelect }: SidebarProps) {
     }
   }
 
-  const handleLogout = () => {
-    logout()
-    router.push("/login")
+  const handleLogout = async () => {
+    try {
+      logout()
+      // Clear any additional state if needed
+      router.push("/login")
+    } catch (err) {
+      console.error("Logout error:", err)
+      // Force redirect even if logout fails
+      router.push("/login")
+    }
+  }
+
+  const getProviderIconPath = (modelId: string): string | null => {
+    if (!modelId) return null
+    const lowerModel = modelId.toLowerCase()
+    if (lowerModel.includes("gpt") || lowerModel.includes("openai") || lowerModel.includes("o1")) {
+      return "/icons/openai.png"
+    } else if (lowerModel.includes("claude") || lowerModel.includes("anthropic")) {
+      return "/icons/anthropic-1.svg"
+    } else if (lowerModel.includes("gemini")) {
+      return "/icons/Google_Gemini_icon_2025.svg.png"
+    } else if (lowerModel.includes("grok")) {
+      return "/icons/Grok-icon.svg.png"
+    } else if (lowerModel.includes("perplexity") || lowerModel.includes("sonar")) {
+      return "/icons/perplexity-e6a4e1t06hd6dhczot580o.webp"
+    }
+    return null
   }
 
   return (
@@ -107,14 +133,15 @@ export function Sidebar({ onNewChat, onConversationSelect }: SidebarProps) {
             <p className="text-xs text-muted-foreground px-2">No history yet.</p>
           ) : (
             history.map((conv) => (
-              <div 
+              <Link
                 key={conv.id}
+                href={`/?id=${conv.id}`}
                 onClick={() => {
                   setSelectedConv(conv.id)
                   onConversationSelect?.(conv.id)
                 }}
                 className={cn(
-                  "group flex items-center justify-between p-2 rounded-lg hover:bg-sidebar-accent transition-colors cursor-pointer",
+                  "group flex items-center justify-between p-2 rounded-lg hover:bg-sidebar-accent transition-colors cursor-pointer block",
                   selectedConv === conv.id && "bg-sidebar-accent"
                 )}
               >
@@ -135,8 +162,27 @@ export function Sidebar({ onNewChat, onConversationSelect }: SidebarProps) {
                   <div className="text-[10px] text-muted-foreground/70 mt-1">
                     {new Date(conv.created_at).toLocaleDateString()} • ${conv.total_cost_usd?.toFixed(4)}
                   </div>
+                  {conv.models_used && conv.models_used.length > 0 && (
+                    <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                      {conv.models_used.slice(0, 3).map((modelId) => {
+                        const iconPath = getProviderIconPath(modelId)
+                        return iconPath ? (
+                          <img
+                            key={modelId}
+                            src={iconPath}
+                            alt={modelId}
+                            className="w-3 h-3 object-contain opacity-70"
+                            title={modelId}
+                          />
+                        ) : null
+                      })}
+                      {conv.models_used.length > 3 && (
+                        <span className="text-[9px] text-muted-foreground/60">+{conv.models_used.length - 3}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
+              </Link>
             ))
           )}
         </div>

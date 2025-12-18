@@ -131,3 +131,19 @@ class SubscriptionDetail(BaseModel):
     created_at: datetime
     expires_at: Optional[datetime]
 
+
+class FeedbackRequest(BaseModel):
+    """Request to submit feedback on a message"""
+    feedback_type: str  # "upvote", "downvote", "download"
+
+
+class FeedbackResponse(BaseModel):
+    """Response after submitting feedback"""
+    id: str
+    message_id: str
+    user_id: str
+    feedback_type: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

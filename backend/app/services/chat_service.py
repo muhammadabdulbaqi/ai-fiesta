@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 
 from app.db_models import Message, CostTracker, APIUsage, Conversation
 
-async def ensure_conversation(db: AsyncSession, conversation_id: str, user_id: str, title: str = None) -> Conversation:
+async def ensure_conversation(db: AsyncSession, conversation_id: str, user_id: str, title: str = None, mode: str = None) -> Conversation:
     """Get existing conversation or create a new one."""
     result = await db.execute(select(Conversation).where(Conversation.id == conversation_id))
     conv = result.scalar_one_or_none()
@@ -21,16 +21,22 @@ async def ensure_conversation(db: AsyncSession, conversation_id: str, user_id: s
         conv = Conversation(
             id=conversation_id, 
             user_id=user_id,
-            title=display_title
+            title=display_title,
+            mode=mode
         )
         db.add(conv)
         await db.commit()
         await db.refresh(conv)
-    elif title and not conv.title:
+    else:
         # Update title if conversation exists but has no title
-        conv.title = title[:100] if len(title) > 100 else title
-        await db.commit()
-        await db.refresh(conv)
+        if title and not conv.title:
+            conv.title = title[:100] if len(title) > 100 else title
+        # Update mode if provided and not set
+        if mode and not conv.mode:
+            conv.mode = mode
+        if title or mode:
+            await db.commit()
+            await db.refresh(conv)
     return conv
 
 async def save_message(
@@ -122,6 +128,7 @@ async def get_user_conversations(db: AsyncSession, user_id: str) -> List[Dict[st
         select(
             Conversation.id,
             Conversation.title,
+            Conversation.mode,
             Conversation.created_at,
             func.coalesce(func.sum(Message.api_cost_usd), 0).label("total_cost"),
             func.coalesce(func.sum(Message.total_tokens), 0).label("total_tokens")
@@ -135,16 +142,29 @@ async def get_user_conversations(db: AsyncSession, user_id: str) -> List[Dict[st
     result = await db.execute(stmt)
     rows = result.all()
     
-    return [
-        {
+    # Get models used for each conversation
+    conversations = []
+    for row in rows:
+        # Get distinct models used in this conversation
+        models_stmt = (
+            select(Message.model)
+            .where(Message.conversation_id == row.id, Message.model.isnot(None))
+            .distinct()
+        )
+        models_result = await db.execute(models_stmt)
+        models_used = [m for m in models_result.scalars().all() if m]
+        
+        conversations.append({
             "id": row.id,
             "title": row.title,
+            "mode": row.mode,
             "created_at": row.created_at,
             "total_cost_usd": row.total_cost,
-            "total_tokens": row.total_tokens
-        }
-        for row in rows
-    ]
+            "total_tokens": row.total_tokens,
+            "models_used": models_used
+        })
+    
+    return conversations
 
 async def get_conversation_messages(db: AsyncSession, conversation_id: str) -> List[Message]:
     result = await db.execute(

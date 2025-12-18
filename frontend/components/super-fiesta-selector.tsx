@@ -5,7 +5,7 @@ import type { Model } from "@/lib/api"
 import { getAvailableModels } from "@/lib/api"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Sparkles, Bot, Zap } from "lucide-react"
+import { Sparkles } from "lucide-react"
 
 interface SuperFiestaSelectorProps {
   value: string
@@ -36,14 +36,25 @@ export function SuperFiestaSelector({ value, onChange, userTier = "free" }: Supe
   }, [])
 
   const getProviderIcon = (provider: string) => {
-    switch (provider) {
-      case "openai": return <Zap className="w-4 h-4" />
-      case "anthropic": return <Bot className="w-4 h-4" />
-      case "gemini": return <Sparkles className="w-4 h-4" />
-      case "grok": return <Sparkles className="w-4 h-4" />
-      case "perplexity": return <Zap className="w-4 h-4" />
-      default: return <Bot className="w-4 h-4" />
+    const iconPaths: Record<string, string> = {
+      openai: "/icons/openai.png",
+      anthropic: "/icons/anthropic-1.svg",
+      gemini: "/icons/Google_Gemini_icon_2025.svg.png",
+      grok: "/icons/Grok-icon.svg.png",
+      perplexity: "/icons/perplexity-e6a4e1t06hd6dhczot580o.webp",
     }
+    
+    const iconPath = iconPaths[provider]
+    if (iconPath) {
+      return (
+        <img
+          src={iconPath}
+          alt={provider}
+          className="w-4 h-4 object-contain"
+        />
+      )
+    }
+    return <Sparkles className="w-4 h-4" />
   }
 
   const groupedModels = models.reduce(
@@ -79,7 +90,6 @@ export function SuperFiestaSelector({ value, onChange, userTier = "free" }: Supe
             {providerModels.map((model) => (
               <SelectItem key={model.value} value={model.value} disabled={userTier === "free" && model.tier !== "free"}>
                 <div className="flex items-center gap-2">
-                  {getProviderIcon(provider)}
                   {model.label}
                   {model.tier !== "free" && (
                     <Badge variant="outline" className="text-xs">
