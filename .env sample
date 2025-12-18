@@ -1,0 +1,15 @@
+APP_NAME=LLM Streaming Backend API
+VERSION=0.1.0
+DOCS_URL=/docs
+REDOC_URL=/redoc
+CORS_ALLOW_ORIGINS=["*"]
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+GEMINI_API_KEY=
+GROK_API_KEY=
+PERPLEXITY_API_KEY=
+NEXT_PUBLIC_API_URL=http://localhost:8000
+DATABASE_URL=postgresql+asyncpg://fiesta_user:fiesta_pass@localhost:5433/fiesta_db
+JWT_SECRET_KEY=your-secret-key-change-in-production
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION_HOURS=24
