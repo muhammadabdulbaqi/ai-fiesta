@@ -1,13 +1,59 @@
 """Model metadata and subscription tier definitions."""
 # This serves as the source of truth for the Frontend "Pricing" page
+
+# Credit normalization constants
+# Base credit value: 1 credit = $0.001 per 1k tokens (1 mill per credit)
+# This ensures fair pricing where same dollar cost = same credits across all models
+CREDIT_BASE_VALUE = 0.001  # $0.001 per 1k tokens per credit
+
+# Typical token ratio: 1 input token : 3 output tokens (based on average usage)
+# Used for calculating weighted average cost
+TYPICAL_INPUT_RATIO = 1
+TYPICAL_OUTPUT_RATIO = 3
+TYPICAL_TOTAL_RATIO = TYPICAL_INPUT_RATIO + TYPICAL_OUTPUT_RATIO
+
+
+def calculate_normalized_credit_multiplier(input_cost_1k: float, output_cost_1k: float) -> float:
+    """
+    Calculate normalized credit multiplier based on actual provider costs.
+    
+    Formula:
+    1. Calculate weighted average cost per 1k tokens (assuming 1:3 input:output ratio)
+    2. Normalize to base credit value: multiplier = avg_cost / CREDIT_BASE_VALUE
+    
+    This ensures that 1 credit = same dollar value across all models.
+    
+    Args:
+        input_cost_1k: Cost per 1k input tokens in USD
+        output_cost_1k: Cost per 1k output tokens in USD
+    
+    Returns:
+        Normalized credit multiplier
+    """
+    # Weighted average cost per 1k tokens
+    # Typical usage: 1k input + 3k output = 4k total tokens
+    weighted_avg_cost = (
+        (input_cost_1k * TYPICAL_INPUT_RATIO) + 
+        (output_cost_1k * TYPICAL_OUTPUT_RATIO)
+    ) / TYPICAL_TOTAL_RATIO
+    
+    # Normalize to base credit value
+    # If avg_cost = $0.001 per 1k tokens, multiplier = 1.0
+    # If avg_cost = $0.01 per 1k tokens, multiplier = 10.0
+    multiplier = weighted_avg_cost / CREDIT_BASE_VALUE
+    
+    # Round to 6 decimal places for precision
+    return round(multiplier, 6)
+
+
 MODEL_META = {
     "gemini-2.5-flash": {
         "label": "Gemini 2.5 Flash",
         "provider": "gemini",
         "description": "Fast, multimodal, and efficient.",
-        "input_cost_1k": 0.0001,  # Example pricing
+        "input_cost_1k": 0.0001,
         "output_cost_1k": 0.0004,
-        "credit_multiplier": 0.005 # Internal credit logic
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.0001, 0.0004)  # Normalized: 0.325
     },
     "gemini-2.5-pro": {
         "label": "Gemini 2.5 Pro",
@@ -15,7 +61,7 @@ MODEL_META = {
         "description": "Reasoning and complex tasks.",
         "input_cost_1k": 0.00125,
         "output_cost_1k": 0.00375,
-        "credit_multiplier": 0.04
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.00125, 0.00375)  # Normalized: 3.125
     },
     "gpt-3.5-turbo": {
         "label": "GPT-3.5 Turbo",
@@ -23,7 +69,7 @@ MODEL_META = {
         "description": "Fast and reliable everyday model.",
         "input_cost_1k": 0.0005,
         "output_cost_1k": 0.0015,
-        "credit_multiplier": 0.01
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.0005, 0.0015)  # Normalized: 1.25
     },
     "gpt-4o": {
         "label": "GPT-4o",
@@ -31,7 +77,7 @@ MODEL_META = {
         "description": "Flagship high-intelligence model.",
         "input_cost_1k": 0.005,
         "output_cost_1k": 0.015,
-        "credit_multiplier": 0.1
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.005, 0.015)  # Normalized: 12.5
     },
     "claude-3-haiku-20240307": {
         "label": "Claude 3 Haiku",
@@ -39,7 +85,7 @@ MODEL_META = {
         "description": "Fastest Claude model.",
         "input_cost_1k": 0.00025,
         "output_cost_1k": 0.00125,
-        "credit_multiplier": 0.02
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.00025, 0.00125)  # Normalized: 1.0
     },
     "claude-3-5-sonnet-20240620": {
         "label": "Claude 3.5 Sonnet",
@@ -47,7 +93,7 @@ MODEL_META = {
         "description": "High intelligence, balanced speed.",
         "input_cost_1k": 0.003,
         "output_cost_1k": 0.015,
-        "credit_multiplier": 0.1
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.003, 0.015)  # Normalized: 12.0
     },
     "grok-beta": {
         "label": "Grok Beta",
@@ -55,7 +101,7 @@ MODEL_META = {
         "description": "X.AI's Grok model with real-time knowledge.",
         "input_cost_1k": 0.001,
         "output_cost_1k": 0.003,
-        "credit_multiplier": 0.05
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.001, 0.003)  # Normalized: 2.5
     },
     "grok-2": {
         "label": "Grok 2",
@@ -63,7 +109,7 @@ MODEL_META = {
         "description": "Latest Grok model with enhanced capabilities.",
         "input_cost_1k": 0.002,
         "output_cost_1k": 0.006,
-        "credit_multiplier": 0.08
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.002, 0.006)  # Normalized: 5.0
     },
     "perplexity-sonar": {
         "label": "Perplexity Sonar",
@@ -71,7 +117,7 @@ MODEL_META = {
         "description": "Perplexity's search-enhanced model.",
         "input_cost_1k": 0.0005,
         "output_cost_1k": 0.002,
-        "credit_multiplier": 0.03
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.0005, 0.002)  # Normalized: 1.625
     },
     "perplexity-sonar-pro": {
         "label": "Perplexity Sonar Pro",
@@ -79,7 +125,7 @@ MODEL_META = {
         "description": "Advanced Perplexity model with web search.",
         "input_cost_1k": 0.001,
         "output_cost_1k": 0.004,
-        "credit_multiplier": 0.06
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.001, 0.004)  # Normalized: 3.25
     },
     # Additional OpenAI models
     "gpt-4o-mini": {
@@ -88,7 +134,7 @@ MODEL_META = {
         "description": "Fast and affordable GPT-4o variant.",
         "input_cost_1k": 0.00015,
         "output_cost_1k": 0.0006,
-        "credit_multiplier": 0.008
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.00015, 0.0006)  # Normalized: 0.4875
     },
     "gpt-4-turbo": {
         "label": "GPT-4 Turbo",
@@ -96,7 +142,7 @@ MODEL_META = {
         "description": "High-performance GPT-4 with improved speed.",
         "input_cost_1k": 0.01,
         "output_cost_1k": 0.03,
-        "credit_multiplier": 0.15
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.01, 0.03)  # Normalized: 25.0
     },
     "o1-mini": {
         "label": "O1 Mini",
@@ -104,7 +150,7 @@ MODEL_META = {
         "description": "OpenAI's reasoning model, smaller variant.",
         "input_cost_1k": 0.003,
         "output_cost_1k": 0.012,
-        "credit_multiplier": 0.12
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.003, 0.012)  # Normalized: 9.75
     },
     "o1-preview": {
         "label": "O1 Preview",
@@ -112,7 +158,7 @@ MODEL_META = {
         "description": "OpenAI's advanced reasoning model.",
         "input_cost_1k": 0.015,
         "output_cost_1k": 0.06,
-        "credit_multiplier": 0.3
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.015, 0.06)  # Normalized: 48.75
     },
     # Additional Anthropic models
     "claude-3-opus-20240229": {
@@ -121,7 +167,7 @@ MODEL_META = {
         "description": "Most powerful Claude model for complex tasks.",
         "input_cost_1k": 0.015,
         "output_cost_1k": 0.075,
-        "credit_multiplier": 0.3
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.015, 0.075)  # Normalized: 60.0
     },
     "claude-3-5-haiku-20241022": {
         "label": "Claude 3.5 Haiku",
@@ -129,7 +175,7 @@ MODEL_META = {
         "description": "Fast and efficient Claude 3.5 variant.",
         "input_cost_1k": 0.00025,
         "output_cost_1k": 0.00125,
-        "credit_multiplier": 0.02
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.00025, 0.00125)  # Normalized: 1.0
     },
     "claude-3-sonnet-20240229": {
         "label": "Claude 3 Sonnet",
@@ -137,7 +183,7 @@ MODEL_META = {
         "description": "Balanced Claude 3 model.",
         "input_cost_1k": 0.003,
         "output_cost_1k": 0.015,
-        "credit_multiplier": 0.1
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.003, 0.015)  # Normalized: 12.0
     },
     # Additional Gemini models
     "gemini-2.0-flash": {
@@ -146,7 +192,7 @@ MODEL_META = {
         "description": "Fast Gemini 2.0 model.",
         "input_cost_1k": 0.0001,
         "output_cost_1k": 0.0004,
-        "credit_multiplier": 0.005
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.0001, 0.0004)  # Normalized: 0.325
     },
     "gemini-pro-latest": {
         "label": "Gemini Pro Latest",
@@ -154,7 +200,7 @@ MODEL_META = {
         "description": "Latest Gemini Pro model.",
         "input_cost_1k": 0.00125,
         "output_cost_1k": 0.00375,
-        "credit_multiplier": 0.04
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.00125, 0.00375)  # Normalized: 3.125
     },
     "gemini-flash-latest": {
         "label": "Gemini Flash Latest",
@@ -162,7 +208,7 @@ MODEL_META = {
         "description": "Latest Gemini Flash model.",
         "input_cost_1k": 0.0001,
         "output_cost_1k": 0.0004,
-        "credit_multiplier": 0.005
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.0001, 0.0004)  # Normalized: 0.325
     },
     "gemini-1.5-pro": {
         "label": "Gemini 1.5 Pro",
@@ -170,7 +216,7 @@ MODEL_META = {
         "description": "Gemini 1.5 Pro with extended context.",
         "input_cost_1k": 0.00125,
         "output_cost_1k": 0.005,
-        "credit_multiplier": 0.05
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.00125, 0.005)  # Normalized: 3.4375
     },
     "gemini-1.5-flash": {
         "label": "Gemini 1.5 Flash",
@@ -178,13 +224,16 @@ MODEL_META = {
         "description": "Fast Gemini 1.5 Flash model.",
         "input_cost_1k": 0.000075,
         "output_cost_1k": 0.0003,
-        "credit_multiplier": 0.004
+        "credit_multiplier": calculate_normalized_credit_multiplier(0.000075, 0.0003)  # Normalized: 0.24375
     }
 }
 
 # Generate simple lookup for cost estimation logic
+# Credit multipliers are now normalized based on actual provider costs
+# 1 credit = $0.001 per 1k tokens (normalized across all models)
 MODEL_CREDIT_COSTS = {k: v["credit_multiplier"] for k, v in MODEL_META.items()}
-MODEL_CREDIT_COSTS["default"] = 0.01
+# Default multiplier for unknown models (mid-range cost)
+MODEL_CREDIT_COSTS["default"] = calculate_normalized_credit_multiplier(0.001, 0.003)  # ~2.5
 
 # --- SUBSCRIPTION TIERS ---
 SUBSCRIPTION_TIERS = {

@@ -30,7 +30,9 @@ if sys.platform == "win32":
 config = context.config
 
 # 3. Overwrite the sqlalchemy.url in the config with the one from our .env file
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# Escape % characters for ConfigParser (it uses % for interpolation)
+escaped_url = DATABASE_URL.replace('%', '%%')
+config.set_main_option("sqlalchemy.url", escaped_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

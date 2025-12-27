@@ -127,17 +127,22 @@ async def get_all_real_api_usage(
     by_provider = {}
     for p, c, t, cost in prov_res.all():
         by_provider[p] = {
-            "calls": c,
-            "tokens": t,
+            "calls": c or 0,
+            "tokens": t or 0,
             "cost": round(cost, 4) if cost else 0
         }
 
+    # Count total users
+    total_users_res = await db.execute(select(func.count(User.id)))
+    total_users = total_users_res.scalar() or 0
+
     # Count users with usage
     u_count_res = await db.execute(select(func.count(APIUsage.user_id.distinct())))
-    users_with_usage = u_count_res.scalar()
+    users_with_usage = u_count_res.scalar() or 0
 
     return {
-        "total_users_with_usage": users_with_usage or 0,
+        "total_users": total_users,
+        "total_users_with_usage": users_with_usage,
         "total_api_calls_made": total_calls or 0,
         "total_tokens_consumed": total_tokens or 0,
         "total_cost_usd": round(total_cost, 4) if total_cost else 0,
