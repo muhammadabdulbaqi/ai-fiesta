@@ -28,6 +28,12 @@ Welcome to the AI Fiesta documentation! This folder contains all guides and docu
 ## Usage & Limits
 
 - **[Usage Limits Guide](./USAGE_LIMITS_GUIDE.md)** - Understand credit and token limits
+- **[Normalized Credits System](./NORMALIZED_CREDITS.md)** - How credits are normalized across models
+
+## Research & Development
+
+- **[R&D Document](./RND.md)** - Comprehensive project R&D covering architecture, features, and implementation
+- **[Token Pricing R&D](./TOKEN_PRICING_RND.md)** - Detailed pricing analysis and token behavior
 
 ## Documentation Structure
 
@@ -42,7 +48,10 @@ docs/
 ├── ADDING_USERS_VIA_PGADMIN.md        # Manual user creation
 ├── MODEL_PRICING_GUIDE.md             # Model pricing and recommendations
 ├── FRONTEND_CUSTOMIZATION_GUIDE.md    # Frontend customization
-└── USAGE_LIMITS_GUIDE.md              # Usage limits explanation
+├── USAGE_LIMITS_GUIDE.md              # Usage limits explanation
+├── NORMALIZED_CREDITS.md              # Normalized credits system documentation
+├── RND.md                             # Comprehensive R&D document
+└── TOKEN_PRICING_RND.md               # Token pricing R&D analysis
 ```
 
 ## Need Help?

@@ -29,20 +29,25 @@ fiesta/
 
 - **Python 3.11+**
 - **Node.js 18+**
-- **Docker** (for PostgreSQL database)
-- **PostgreSQL** (via Docker or local installation)
+- **PostgreSQL** (local installation recommended, or use Docker)
+- **pgAdmin** (optional, for database management)
 
 ## Quick Start Guide
 
-### Step 1: Start the Database
+### Step 1: Set Up the Database
 
-The application uses PostgreSQL. Start it with Docker:
+The application uses PostgreSQL. You can use either a local PostgreSQL installation or Docker:
 
+**Option A: Local PostgreSQL (Recommended)**
+1. Install PostgreSQL locally or use a tool like [DBngin](https://dbngin.com/)
+2. Create a database named `fiesta_db`
+3. Update the `DATABASE_URL` in `backend/.env` (see Step 2 below)
+
+**Option B: Docker (Legacy)**
 ```bash
 cd backend
 docker-compose up -d
 ```
-
 This will start PostgreSQL on port **5433** (to avoid conflicts with your desktop pgAdmin).
 
 Verify it's running:
@@ -88,8 +93,12 @@ docker ps
    GROK_API_KEY=your_grok_key_here          # Optional
    PERPLEXITY_API_KEY=your_perplexity_key  # Optional
    
-   # Database (already configured for Docker)
-   DATABASE_URL=postgresql+asyncpg://fiesta_user:fiesta_pass@localhost:5433/fiesta_db
+   # Database connection string
+   # For local PostgreSQL (default port 5432):
+   # DATABASE_URL=postgresql+asyncpg://postgres:your_password@localhost:5432/fiesta_db
+   # For Docker PostgreSQL (port 5433):
+   # DATABASE_URL=postgresql+asyncpg://fiesta_user:fiesta_pass@localhost:5433/fiesta_db
+   DATABASE_URL=postgresql+asyncpg://postgres:your_password@localhost:5432/fiesta_db
    
    # JWT Authentication (change in production!)
    JWT_SECRET_KEY=your-secret-key-change-in-production
@@ -200,19 +209,20 @@ See the [Database Management Guide](./docs/DATABASE_MANAGEMENT_GUIDE.md) and [Da
 
 ### Quick Commands
 
-**Using Docker:**
+**Database Migrations:**
+```bash
+cd backend
+alembic upgrade head    # Apply migrations
+```
+
+**Using Docker (Optional):**
 ```bash
 cd backend
 docker-compose up -d    # Start
 docker-compose down     # Stop
 docker-compose logs     # View logs
 ```
-
-**Database Migrations:**
-```bash
-cd backend
-alembic upgrade head    # Apply migrations
-```
+Note: The project now uses standalone PostgreSQL by default. Docker is optional and will be fully integrated in the next release.
 
 ## Environment Variables
 
@@ -349,7 +359,7 @@ All documentation is located in the [`docs/`](./docs/) folder:
 
 ### Planned Features
 
-- **Database Standalone Setup**: Migrate from Docker-based PostgreSQL to a standalone PostgreSQL installation using DBngin (https://dbngin.com/). This will provide a more persistent and easier-to-manage database setup. Note: This migration may result in data loss, so it should be planned accordingly.
+- **Project Dockerization**: Dockerize the entire application stack (backend, frontend, and database) for easier deployment and development environment consistency. This will be included in the next release.
 
 - **Enhanced UI Features**:
   - Improved conversation history with real-time updates
